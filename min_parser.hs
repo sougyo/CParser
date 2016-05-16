@@ -33,15 +33,15 @@ token_parser = many1 $ PosToken <$> getPosition <*> makeToken <* spaces
     makeToken =     try (Constant <$> many1 digit)
                 <|> try identifier
                 <|> Operator <$> operator
-    operator  =     try (char '+' *> return Plus)
-                <|> try (char '-' *> return Minus)
-                <|> try (char '*' *> return Asterisk)
-                <|> try (char '/' *> return Slash)
-                <|> try (char '(' *> return LeftParenthes)
-                <|>      char ')' *> return RightParenthes
+    operator  =     char '+' *> return Plus
+                <|> char '-' *> return Minus
+                <|> char '*' *> return Asterisk
+                <|> char '/' *> return Slash
+                <|> char '(' *> return LeftParenthes
+                <|> char ')' *> return RightParenthes
     identifier = fmap Identifier identifier_str
-    identifier_str = (:) <$> nondigit <*> many (try nondigit <|> digit)
-    nondigit = try letter <|> char '_'
+    identifier_str = (:) <$> nondigit <*> many (nondigit <|> digit)
+    nondigit = letter <|> char '_'
 
 
 gen_p m = tokenPrim (\c -> show c) (\pos c _cs -> get_pos c) $ m . get_token
@@ -60,12 +60,12 @@ data Expr = EIdent String | EConst String | BinOp OperatorType Expr Expr | Unary
   deriving (Show, Eq)
 
 
-expr = chainl1 term $ try plus_op <|> minus_op
+expr = chainl1 term $ plus_op <|> minus_op
   where
     plus_op  = p_op Plus  *> return (BinOp Plus)
     minus_op = p_op Minus *> return (BinOp Minus)
 
-term = chainl1 factor $ try mul_op <|> div_op
+term = chainl1 factor $ mul_op <|> div_op
   where
     mul_op = p_op Asterisk *> return (BinOp Asterisk)
     div_op = p_op Slash    *> return (BinOp Slash)
