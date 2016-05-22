@@ -12,6 +12,26 @@ data OperatorType =
   | Asterisk
   | Slash
   | Semicolon
+  | PlusPlus
+  | MinusMinus
+  | And
+  | Tilde
+  | Exclamation
+  | Percent 
+  | LeftShift
+  | RightShift
+  | LessThan
+  | GreaterThan
+  | LessThanEqual
+  | GreaterThanEqual
+  | EqualEqual
+  | NotEqual
+  | Hat
+  | Or
+  | AndAnd
+  | OrOr
+  | Colon
+  | Question
   deriving (Show, Eq)
 
 data Token =   Constant String
@@ -35,10 +55,28 @@ token_parser = many1 $ PosToken <$> getPosition <*> makeToken <* spaces
                 <|> try identifier
                 <|> try (StringLiteral <$> string_literal)
                 <|> Operator <$> operator
-    operator  =     char '+' *> return Plus
+    operator  =     try (string "++" *> return PlusPlus)
+                <|> try (string "--" *> return MinusMinus)
+                <|> try (string "<<" *> return LeftShift)
+                <|> try (string ">>" *> return RightShift)
+                <|> try (string "<=" *> return LessThanEqual)
+                <|> try (string ">=" *> return GreaterThanEqual)
+                <|> try (string "!=" *> return NotEqual)
+                <|> try (string "==" *> return EqualEqual)
+                <|> try (string "&&" *> return AndAnd)
+                <|> try (string "||" *> return OrOr)
+                <|> char '+' *> return Plus
                 <|> char '-' *> return Minus
                 <|> char '*' *> return Asterisk
                 <|> char '/' *> return Slash
+                <|> char '%' *> return Percent
+                <|> char '<' *> return LessThan
+                <|> char '>' *> return GreaterThan
+                <|> char '&' *> return And
+                <|> char '|' *> return Or
+                <|> char '^' *> return Hat
+                <|> char ':' *> return Colon
+                <|> char '?' *> return Question
                 <|> char '(' *> return LeftParenthes
                 <|> char ')' *> return RightParenthes
     identifier = fmap Identifier identifier_str
@@ -71,24 +109,45 @@ p_op p   = gen_p $ \n -> if n == Operator p
               then Just p
               else Nothing
 
-
 data Expr =   EIdent  String
             | EConst  String
             | EString String
-            | BinOp OperatorType Expr Expr
-            | UnaryOp OperatorType Expr
+            | TernaryOp Expr Expr Expr
+            | BinOp     OperatorType Expr Expr
+            | UnaryOp   OperatorType Expr
   deriving (Show, Eq)
 
+binOp p = p_op p *> return (BinOp p)
 
-expr = chainl1 term $ plus_op <|> minus_op
-  where
-    plus_op  = p_op Plus  *> return (BinOp Plus)
-    minus_op = p_op Minus *> return (BinOp Minus)
+expr = cond_e
 
-term = chainl1 factor $ mul_op <|> div_op
+cond_e = lor_e >>= rest
   where
-    mul_op = p_op Asterisk *> return (BinOp Asterisk)
-    div_op = p_op Slash    *> return (BinOp Slash)
+    rest p =     try (TernaryOp p <$> (p_op Question *> expr) <*> (p_op Colon *> cond_e))
+             <|> return p
+
+lor_e   = chainl1 land_e     $ binOp OrOr
+
+land_e  = chainl1 or_e       $ binOp AndAnd
+
+or_e    = chainl1 exor_e     $ binOp Or
+
+exor_e  = chainl1 and_e      $ binOp Hat
+
+and_e   = chainl1 equal_e    $ binOp And
+
+equal_e = chainl1 relation_e $ binOp EqualEqual <|> binOp NotEqual
+
+relation_e = chainl1 shift_e $ binOp LessThan         <|>
+                               binOp GreaterThan      <|>
+                               binOp LessThanEqual    <|>
+                               binOp GreaterThanEqual
+
+shift_e          = chainl1 additive_e $ binOp LeftShift <|> binOp RightShift
+
+additive_e       = chainl1 multiplicative_e $ binOp Plus <|> binOp Minus
+
+multiplicative_e = chainl1 factor $ binOp Asterisk <|> binOp Slash <|> binOp Percent
 
 factor =     try parenthes_op
          <|> try unary_plus
