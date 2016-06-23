@@ -52,13 +52,66 @@ data OperatorType =
   deriving (Show, Eq)
 
 data KeywordType = 
-    If
-  | Else
+    K_If
+  | K_Else 
+  | K_Void
+  | K_Char
+  | K_Short
+  | K_Int
+  | K_Long
+  | K_Float
+  | K_Double
+  | K_Signed
+  | K_Unsigned
+  | K_Struct
+  | K_Union
+  | K_Enum
+  | K_Typedef
+  | K_Extern
+  | K_Static
+  | K_Auto
+  | K_Register
+  | K_Const
+  | K_Volatile
   deriving (Show, Eq)
 
 keyword_dictionary = [
-  ("if"  , If),
-  ("else", Else) ]
+  ("if"      , K_If      ),
+  ("else"    , K_Else    ),
+  ("void"    , K_Void    ),
+  ("char"    , K_Char    ),
+  ("short"   , K_Short   ),
+  ("int"     , K_Int     ),
+  ("long"    , K_Long    ),
+  ("float"   , K_Float   ),
+  ("double"  , K_Double  ),
+  ("signed"  , K_Signed  ),
+  ("unsigned", K_Unsigned),
+  ("struct"  , K_Struct  ),
+  ("union"   , K_Union   ),
+  ("enum"    , K_Enum    ),
+  ("typedef" , K_Typedef ),
+  ("extern"  , K_Extern  ),
+  ("static"  , K_Static  ),
+  ("auto"    , K_Auto    ),
+  ("register", K_Register),
+  ("const"   , K_Const   ),
+  ("volatile", K_Volatile)
+  ]
+
+data CType = 
+    Cvoid
+  | Cchar
+  | Cshort
+  | Cint
+  | Clong
+  | Cfloat
+  | Cdouble
+  | Csigned
+  | Cunsigned
+
+data C
+
 
 data Token =   Constant String
              | Identifier String
@@ -272,10 +325,10 @@ data Statement =   ExprStatement Expr
 
 statement = try selection_stmt <|> try block_stmt <|> expr_stmt
 
-selection_stmt = do p_kwd If
+selection_stmt = do p_kwd K_If 
                     e  <- p_op LeftParenthes *> expr <* p_op RightParenthes
                     s1 <- statement
-                    s2 <- option NullStatement (p_kwd Else *> statement)
+                    s2 <- option NullStatement (p_kwd K_Else *> statement)
                     return $ IfStatement e s1 s2
 
 block_stmt = p_op LeftBrace *> block_items <* p_op RightBrace
@@ -288,36 +341,67 @@ declaration = do declaration_spec
                  sepBy1 init_declarator (p_op Comma)
                  p_op Semicolon
 
+data DeclarationSpecifier =
+    DS_Type      TypeSpecifier
+  | DS_Qualifier TypeQualifier
+  | DS_Storage   TypeStorage
+  deriving (Show, Eq)
+
 declaration_spec = many1 $
-  (try type_spec <|> try type_qualifier <|> storage_class_spec)
+      try (DS_Type      <$> type_spec)
+  <|> try (DS_Qualifier <$> type_qualifier)
+  <|>      DS_Storage   <$> storage_class_spec
 
-type_spec =     try (p_ident_s "void")
-            <|> try (p_ident_s "char")
-            <|> try (p_ident_s "short")
-            <|> try (p_ident_s "int")
-            <|> try (p_ident_s "long")
-            <|> try (p_ident_s "float")
-            <|> try (p_ident_s "double")
-            <|> try (p_ident_s "signed")
-            <|> p_ident_s "unsigned"
+data TypeSpecifier =
+    TypeKeyword KeywordType
+  deriving (Show, Eq)
 
-type_qualifier =     try (p_ident_s "const")
-                 <|> try (p_ident_s "restrict")
-                 <|> try (p_ident_s "volatile")
+data TypeQualifier =
+    QualifierKeyword KeywordType
+  deriving (Show, Eq)
 
-storage_class_spec =     try (p_ident_s "typedef")
-                     <|> try (p_ident_s "extern")
-                     <|> try (p_ident_s "static")
-                     <|> try (p_ident_s "auto")
-                     <|> p_ident_s "register"
+data TypeStorage =
+    StorageKeyword KeywordType
+  deriving (Show, Eq)
+
+type_spec = fmap TypeKeyword $ 
+      try (p_kwd K_Void)
+  <|> try (p_kwd K_Char)
+  <|> try (p_kwd K_Short)
+  <|> try (p_kwd K_Int)
+  <|> try (p_kwd K_Long)
+  <|> try (p_kwd K_Float)
+  <|> try (p_kwd K_Double)
+  <|> try (p_kwd K_Signed)
+  <|>      p_kwd K_Unsigned
+
+type_qualifier = fmap QualifierKeyword $
+      try (p_kwd K_Const)
+  <|>      p_kwd K_Volatile
+
+storage_class_spec = fmap StorageKeyword $
+      try (p_kwd K_Typedef)
+  <|> try (p_kwd K_Extern)
+  <|> try (p_kwd K_Static)
+  <|> try (p_kwd K_Auto)
+  <|>      p_kwd K_Register
 
 type_qualifier_list = many1 type_qualifier
 
-pointer = many1 $ p_op Asterisk *> many type_qualifier
+data Pointer = Pointer [[TypeQualifier]]
+  deriving (Show, Eq)
 
-init_declarator = declarator
+pointer = fmap Pointer $ many1 $ p_op Asterisk *> many type_qualifier
+
+data Declarator =
+    DeclaratorN DirectDeclarator
+  | DeclaratorP Pointer DirectDeclarator
+  deriving (Show, Eq)
 
 declarator = optional pointer *> direct_declarator
+
+data DirectDeclarator = DirectDeclarator
+  deriving (Show, Eq)
 
 direct_declarator = do ident_or_decl >>= rest
   where
@@ -329,10 +413,11 @@ direct_declarator = do ident_or_decl >>= rest
     opt_ident_list = sepBy p_ident (p_op Comma)
     
 
+init_declarator = declarator
+
 parameter_type_list = do p <- parameter_list
                          try (parameter_list *> (optional $ p_op Comma *> p_op ThreeDots) *> return p)
                            <|> return p
-                         
 
 parameter_list = sepBy1 parameter_declaration (p_op Comma)
 
