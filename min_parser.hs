@@ -406,13 +406,12 @@ direct_declarator = (try ident <|> decl) >>= rest
     rest p   = try (helper p >>= rest) <|> return p
     ident    = DD_Ident <$> p_ident
     decl     = parenthes $ DD_Declarator <$> declarator
-    helper p =     try (bracket   $ return (DD_BracketE p NullExpr))
-               <|> try (bracket   $ DD_BracketE   <$> return p <*> cond_e)
-               <|> try (parenthes $ return (DD_ParenthesP p $ ParameterTypeList False []))
-               <|> try (parenthes $ DD_ParenthesP <$> return p <*> parameter_type_list)
-               <|>     (parenthes $ DD_ParenthesI <$> return p <*> sepBy p_ident (p_op Comma))
+    helper p =     try (bracket   $ DD_BracketE   <$> return p <*> option NullExpr cond_e)
+               <|> try (parenthes $ DD_ParenthesI <$> return p <*> sepBy p_ident (p_op Comma))
+               <|> try (parenthes $ DD_ParenthesP <$> return p <*> option null_parm parameter_type_list)
     bracket   = between (p_op LeftBracket)   (p_op RightBracket)
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
+    null_parm = ParameterTypeList False []
 
 data AbstractDeclarator = AbstractDeclarator Pointer DirectAbstractDeclarator
   deriving (Show, Eq)
@@ -435,10 +434,9 @@ direct_abstract_declarator = head_decl >>= rest
                 <|> post AD_Null
     bracket   = between (p_op LeftBracket)   (p_op RightBracket)
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
-    post p    =     try (bracket   $ return (AD_Bracket p NullExpr))
-                <|> try (bracket   $ AD_Bracket   <$> return p <*> cond_e)
-                <|> try (parenthes $ return (AD_Parenthes p $ ParameterTypeList False []))
-                <|>     (parenthes $ AD_Parenthes <$> return p <*> parameter_type_list)
+    post p    =     try (bracket   $ AD_Bracket   <$> return p <*> option NullExpr  cond_e)
+                <|>     (parenthes $ AD_Parenthes <$> return p <*> option null_parm parameter_type_list)
+    null_parm = ParameterTypeList False []
 
 init_declarator = declarator
 
