@@ -416,6 +416,37 @@ direct_declarator = (try ident <|> decl) >>= rest
     bracket   = between (p_op LeftBracket)   (p_op RightBracket)
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
 
+data AbstractDeclarator =
+    AbstractDeclaratorP  Pointer
+  | AbstractDeclaratorD  DirectAbstractDeclarator
+  | AbstractDeclaratorPD Pointer DirectAbstractDeclarator
+  deriving (Show, Eq)
+
+abstract_declarator =     try (AbstractDeclaratorPD <$> pointer <*> direct_abstract_declarator)
+                      <|> try (AbstractDeclaratorP  <$> pointer)
+                      <|>      AbstractDeclaratorD  <$> direct_abstract_declarator
+
+data DirectAbstractDeclarator =
+    AD_Abstract   AbstractDeclarator
+  | AD_BracketE   DirectAbstractDeclarator Expr
+  | AD_BracketN   DirectAbstractDeclarator
+  | AD_ParenthesP DirectAbstractDeclarator ParameterTypeList
+  | AD_ParenthesN DirectAbstractDeclarator
+  | AD_Null
+  deriving (Show, Eq)
+
+direct_abstract_declarator = head_decl >>= rest
+  where
+    rest p    = try (post p >>= rest) <|> return p
+    head_decl = try (AD_Abstract <$> parenthes abstract_declarator)
+                  <|> (post AD_Null)
+    bracket   = between (p_op LeftBracket)   (p_op RightBracket)
+    parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
+    post p    =     try (bracket   $ AD_BracketN   <$> return p)
+                <|> try (bracket   $ AD_BracketE   <$> return p <*> cond_e)
+                <|> try (parenthes $ AD_ParenthesN <$> return p)
+                <|>     (parenthes $ AD_ParenthesP <$> return p <*> parameter_type_list)
+
 init_declarator = declarator
 
 data ParameterTypeList =
@@ -433,11 +464,13 @@ parameter_list = sepBy1 parameter_declaration $ p_op Comma
 
 data ParameterDeclaration =
     ParameterDeclarationD [DeclarationSpecifier] Declarator
-  | ParameterDeclarationA
+  | ParameterDeclarationA AbstractDeclarator
+  | ParameterDeclarationN
   deriving (Show, Eq)
 
-parameter_declaration =     try (ParameterDeclarationD <$> declaration_specs <*> declarator)
-                        <|> return ParameterDeclarationA
+parameter_declaration =     try   (ParameterDeclarationD <$> declaration_specs <*> declarator)
+                        <|> try   (ParameterDeclarationA <$> abstract_declarator)
+                        <|> return ParameterDeclarationN
 
 initializer = assignment_e
 
