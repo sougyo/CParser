@@ -99,20 +99,6 @@ keyword_dictionary = [
   ("volatile", K_Volatile)
   ]
 
-data CType = 
-    Cvoid
-  | Cchar
-  | Cshort
-  | Cint
-  | Clong
-  | Cfloat
-  | Cdouble
-  | Csigned
-  | Cunsigned
-
-data C
-
-
 data Token =   Constant String
              | Identifier String
              | StringLiteral String
@@ -309,9 +295,9 @@ postfix_e = primary_e >>= rest
 
 primary_e = try e_const <|> try e_ident <|> try e_string <|> e_parenthes
   where
-    e_const  = p_const  >>= return . EConst
-    e_ident  = p_ident  >>= return . EIdent
-    e_string = p_string >>= return . EString
+    e_const  = EConst  <$> p_const
+    e_ident  = EIdent  <$> p_ident
+    e_string = EString <$> p_string
     e_parenthes = p_op LeftParenthes *> expr <* p_op RightParenthes
 
 data BlockItem = StatementBlockItem Statement
@@ -347,7 +333,9 @@ data DeclarationSpecifier =
   | DS_Storage   TypeStorage
   deriving (Show, Eq)
 
-declaration_spec = many1 $
+declaration_specs = many1 declaration_spec
+
+declaration_spec = 
       try (DS_Type      <$> type_spec)
   <|> try (DS_Qualifier <$> type_qualifier)
   <|>      DS_Storage   <$> storage_class_spec
@@ -391,37 +379,65 @@ type_qualifier_list = many1 type_qualifier
 data Pointer = Pointer [[TypeQualifier]]
   deriving (Show, Eq)
 
-pointer = fmap Pointer $ many1 $ p_op Asterisk *> many type_qualifier
+pointer = Pointer <$> many1 helper
+  where
+    helper = p_op Asterisk *> many type_qualifier
 
 data Declarator =
     DeclaratorN DirectDeclarator
   | DeclaratorP Pointer DirectDeclarator
   deriving (Show, Eq)
 
-declarator = optional pointer *> direct_declarator
+declarator = try decl_p <|> decl_n
+  where
+    decl_p = DeclaratorP <$> pointer <*> direct_declarator
+    decl_n = DeclaratorN <$> direct_declarator
 
-data DirectDeclarator = DirectDeclarator
+data DirectDeclarator = 
+    DD_Ident String
+  | DD_Declarator Declarator
+  | DD_BracketN   DirectDeclarator
+  | DD_BracketE   DirectDeclarator Expr
+  | DD_ParenthesN DirectDeclarator
+  | DD_ParenthesP DirectDeclarator ParameterTypeList
+  | DD_ParenthesI DirectDeclarator [String]
   deriving (Show, Eq)
 
-direct_declarator = do ident_or_decl >>= rest
+direct_declarator = (try ident <|> decl) >>= rest
   where
-    ident_or_decl = try p_ident <|> p_op LeftParenthes *> declarator <* p_op RightParenthes
     rest p   = try (helper p >>= rest) <|> return p
-    helper p =     try (p_op LeftBracket *> (option NullExpr assignment_e) *> p_op RightBracket *> return p)
-               <|> try (p_op LeftParenthes *> parameter_type_list *> p_op RightParenthes *> return p)
-               <|> try (p_op LeftParenthes *> opt_ident_list *> p_op RightParenthes *> return p)
-    opt_ident_list = sepBy p_ident (p_op Comma)
-    
+    ident    = DD_Ident <$> p_ident
+    decl     = parenthes $ DD_Declarator <$> declarator
+    helper p =     try (bracket   $ DD_BracketN   <$> return p)
+               <|> try (bracket   $ DD_BracketE   <$> return p <*> cond_e)
+               <|> try (parenthes $ DD_ParenthesN <$> return p)
+               <|> try (parenthes $ DD_ParenthesP <$> return p <*> parameter_type_list)
+               <|>     (parenthes $ DD_ParenthesI <$> return p <*> sepBy p_ident (p_op Comma))
+    bracket   = between (p_op LeftBracket)   (p_op RightBracket)
+    parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
 
 init_declarator = declarator
 
+data ParameterTypeList =
+    ParameterTypeListN [ParameterDeclaration]
+  | ParameterTypeListE [ParameterDeclaration]
+  deriving (Show, Eq)
+
 parameter_type_list = do p <- parameter_list
-                         try (parameter_list *> (optional $ p_op Comma *> p_op ThreeDots) *> return p)
-                           <|> return p
+                         try (ellipsis *> return (ParameterTypeListE p)) <|>
+                                          return (ParameterTypeListN p)
+  where
+    ellipsis = p_op Comma *> p_op ThreeDots
+  
+parameter_list = sepBy1 parameter_declaration $ p_op Comma
 
-parameter_list = sepBy1 parameter_declaration (p_op Comma)
+data ParameterDeclaration =
+    ParameterDeclarationD [DeclarationSpecifier] Declarator
+  | ParameterDeclarationA
+  deriving (Show, Eq)
 
-parameter_declaration = declaration_spec *> declarator
+parameter_declaration =     try (ParameterDeclarationD <$> declaration_specs <*> declarator)
+                        <|> return ParameterDeclarationA
 
 initializer = assignment_e
 
