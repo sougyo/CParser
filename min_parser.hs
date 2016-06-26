@@ -396,9 +396,7 @@ declarator = try decl_p <|> decl_n
 data DirectDeclarator = 
     DD_Ident String
   | DD_Declarator Declarator
-  | DD_BracketN   DirectDeclarator
   | DD_BracketE   DirectDeclarator Expr
-  | DD_ParenthesN DirectDeclarator
   | DD_ParenthesP DirectDeclarator ParameterTypeList
   | DD_ParenthesI DirectDeclarator [String]
   deriving (Show, Eq)
@@ -408,55 +406,48 @@ direct_declarator = (try ident <|> decl) >>= rest
     rest p   = try (helper p >>= rest) <|> return p
     ident    = DD_Ident <$> p_ident
     decl     = parenthes $ DD_Declarator <$> declarator
-    helper p =     try (bracket   $ DD_BracketN   <$> return p)
+    helper p =     try (bracket   $ return (DD_BracketE p NullExpr))
                <|> try (bracket   $ DD_BracketE   <$> return p <*> cond_e)
-               <|> try (parenthes $ DD_ParenthesN <$> return p)
+               <|> try (parenthes $ return (DD_ParenthesP p $ ParameterTypeList False []))
                <|> try (parenthes $ DD_ParenthesP <$> return p <*> parameter_type_list)
                <|>     (parenthes $ DD_ParenthesI <$> return p <*> sepBy p_ident (p_op Comma))
     bracket   = between (p_op LeftBracket)   (p_op RightBracket)
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
 
-data AbstractDeclarator =
-    AbstractDeclaratorP  Pointer
-  | AbstractDeclaratorD  DirectAbstractDeclarator
-  | AbstractDeclaratorPD Pointer DirectAbstractDeclarator
+data AbstractDeclarator = AbstractDeclarator Pointer DirectAbstractDeclarator
   deriving (Show, Eq)
 
-abstract_declarator =     try (AbstractDeclaratorPD <$> pointer <*> direct_abstract_declarator)
-                      <|> try (AbstractDeclaratorP  <$> pointer)
-                      <|>      AbstractDeclaratorD  <$> direct_abstract_declarator
+abstract_declarator =     try (AbstractDeclarator <$> pointer             <*> direct_abstract_declarator)
+                      <|> try (AbstractDeclarator <$> pointer             <*> return AD_Null)
+                      <|>      AbstractDeclarator <$> return (Pointer []) <*> direct_abstract_declarator
 
 data DirectAbstractDeclarator =
-    AD_Abstract   AbstractDeclarator
-  | AD_BracketE   DirectAbstractDeclarator Expr
-  | AD_BracketN   DirectAbstractDeclarator
-  | AD_ParenthesP DirectAbstractDeclarator ParameterTypeList
-  | AD_ParenthesN DirectAbstractDeclarator
+    AD_Abstract  AbstractDeclarator
+  | AD_Bracket   DirectAbstractDeclarator Expr
+  | AD_Parenthes DirectAbstractDeclarator ParameterTypeList
   | AD_Null
   deriving (Show, Eq)
 
 direct_abstract_declarator = head_decl >>= rest
   where
     rest p    = try (post p >>= rest) <|> return p
-    head_decl = try (AD_Abstract <$> parenthes abstract_declarator)
-                  <|> (post AD_Null)
+    head_decl =     try (AD_Abstract <$> parenthes abstract_declarator)
+                <|> post AD_Null
     bracket   = between (p_op LeftBracket)   (p_op RightBracket)
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
-    post p    =     try (bracket   $ AD_BracketN   <$> return p)
-                <|> try (bracket   $ AD_BracketE   <$> return p <*> cond_e)
-                <|> try (parenthes $ AD_ParenthesN <$> return p)
-                <|>     (parenthes $ AD_ParenthesP <$> return p <*> parameter_type_list)
+    post p    =     try (bracket   $ return (AD_Bracket p NullExpr))
+                <|> try (bracket   $ AD_Bracket   <$> return p <*> cond_e)
+                <|> try (parenthes $ return (AD_Parenthes p $ ParameterTypeList False []))
+                <|>     (parenthes $ AD_Parenthes <$> return p <*> parameter_type_list)
 
 init_declarator = declarator
 
-data ParameterTypeList =
-    ParameterTypeListN [ParameterDeclaration]
-  | ParameterTypeListE [ParameterDeclaration]
+data ParameterTypeList = ParameterTypeList Bool [ParameterDeclaration]
   deriving (Show, Eq)
 
-parameter_type_list = do p <- parameter_list
-                         try (ellipsis *> return (ParameterTypeListE p)) <|>
-                                          return (ParameterTypeListN p)
+parameter_type_list = parameter_list >>= \p ->
+                        try (ellipsis *> return (ParameterTypeList True  p)) <|>
+                                         return (ParameterTypeList False p)
   where
     ellipsis = p_op Comma *> p_op ThreeDots
   
@@ -464,13 +455,14 @@ parameter_list = sepBy1 parameter_declaration $ p_op Comma
 
 data ParameterDeclaration =
     ParameterDeclarationD [DeclarationSpecifier] Declarator
-  | ParameterDeclarationA AbstractDeclarator
-  | ParameterDeclarationN
+  | ParameterDeclarationA [DeclarationSpecifier] AbstractDeclarator
+  | ParameterDeclarationN [DeclarationSpecifier]
   deriving (Show, Eq)
 
-parameter_declaration =     try   (ParameterDeclarationD <$> declaration_specs <*> declarator)
-                        <|> try   (ParameterDeclarationA <$> abstract_declarator)
-                        <|> return ParameterDeclarationN
+parameter_declaration =  declaration_specs >>= \d ->
+                              try    (ParameterDeclarationD d <$> declarator)
+                          <|> try    (ParameterDeclarationA d <$> abstract_declarator)
+                          <|> return (ParameterDeclarationN d)
 
 initializer = assignment_e
 
