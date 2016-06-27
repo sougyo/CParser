@@ -323,9 +323,13 @@ block_items = fmap BlkStatement $ many (StatementBlockItem <$> statement)
 
 expr_stmt = fmap ExprStatement (option NullExpr expr <* p_op Semicolon)
 
-declaration = do declaration_spec
-                 sepBy1 init_declarator (p_op Comma)
-                 p_op Semicolon
+
+data Declaration = Declaration DeclarationSpecifier [InitDeclarator]
+  deriving (Show, Eq)
+
+declaration = Declaration <$> declaration_spec <*> init_declarator_list <* p_op Semicolon
+  where
+    init_declarator_list = sepBy init_declarator (p_op Comma)
 
 data DeclarationSpecifier =
     DS_Type      TypeSpecifier
@@ -353,26 +357,26 @@ data TypeStorage =
   deriving (Show, Eq)
 
 type_spec = fmap TypeKeyword $ 
-      try (p_kwd K_Void)
-  <|> try (p_kwd K_Char)
-  <|> try (p_kwd K_Short)
-  <|> try (p_kwd K_Int)
-  <|> try (p_kwd K_Long)
-  <|> try (p_kwd K_Float)
-  <|> try (p_kwd K_Double)
-  <|> try (p_kwd K_Signed)
-  <|>      p_kwd K_Unsigned
+      p_kwd K_Void
+  <|> p_kwd K_Char
+  <|> p_kwd K_Short
+  <|> p_kwd K_Int
+  <|> p_kwd K_Long
+  <|> p_kwd K_Float
+  <|> p_kwd K_Double
+  <|> p_kwd K_Signed
+  <|> p_kwd K_Unsigned
 
 type_qualifier = fmap QualifierKeyword $
-      try (p_kwd K_Const)
-  <|>      p_kwd K_Volatile
+      p_kwd K_Const
+  <|> p_kwd K_Volatile
 
 storage_class_spec = fmap StorageKeyword $
-      try (p_kwd K_Typedef)
-  <|> try (p_kwd K_Extern)
-  <|> try (p_kwd K_Static)
-  <|> try (p_kwd K_Auto)
-  <|>      p_kwd K_Register
+      p_kwd K_Typedef
+  <|> p_kwd K_Extern
+  <|> p_kwd K_Static
+  <|> p_kwd K_Auto
+  <|> p_kwd K_Register
 
 type_qualifier_list = many1 type_qualifier
 
@@ -438,8 +442,6 @@ direct_abstract_declarator = head_decl >>= rest
                 <|>     (parenthes $ AD_Parenthes <$> return p <*> option null_parm parameter_type_list)
     null_parm = ParameterTypeList False []
 
-init_declarator = declarator
-
 data ParameterTypeList = ParameterTypeList Bool [ParameterDeclaration]
   deriving (Show, Eq)
 
@@ -462,20 +464,46 @@ parameter_declaration =  declaration_specs >>= \d ->
                           <|> try    (ParameterDeclarationA d <$> abstract_declarator)
                           <|> return (ParameterDeclarationN d)
 
-initializer = assignment_e
 
-function_definition = do
-  declaration_spec
-  declarator
-  many declaration
-  block_stmt
+data InitDeclarator =
+    InitDeclaratorD Declarator
+  | InitDeclaratorI Declarator Initializer
+  deriving (Show, Eq)
 
-external_declaration = try (function_definition *> return ()) <|> (declaration *> return ())
+init_declarator = declarator >>= \d ->
+                        try    (InitDeclaratorI d <$> (p_op Equal *> initializer))
+                    <|> return (InitDeclaratorD d)
+
+data Initializer = 
+    InitializerA Expr
+  | InitializerI [Initializer]
+  deriving (Show, Eq)
+
+initializer =     try (InitializerA <$> assignment_e)
+              <|> p_op LeftBrace *> (InitializerI <$> initializer_list) <* optional (p_op Comma) <* p_op RightBrace
+  where
+    initializer_list = sepBy1 initializer $ p_op Comma
+
+data FunctionDefinition = FunctionDefinition [DeclarationSpecifier] Declarator [Declaration] Statement
+  deriving (Show, Eq)
+
+function_definition = FunctionDefinition <$>
+      many declaration_spec
+  <*> declarator
+  <*> many declaration
+  <*> block_stmt
+
+data ExternalDeclaration =
+    ExternalDeclarationF FunctionDefinition
+  | ExternalDeclarationD Declaration
+  deriving (Show, Eq)
+
+external_declaration =      try (ExternalDeclarationF <$> function_definition)
+                       <|>      (ExternalDeclarationD <$> declaration)
 
 translation_unit = many1 external_declaration
 
-
-min_parser = statement <* eof
+min_parser = translation_unit <* eof
 
 main = getContents >>= run
 
