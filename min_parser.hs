@@ -300,28 +300,34 @@ primary_e = try e_const <|> try e_ident <|> try e_string <|> e_parenthes
     e_string = EString <$> p_string
     e_parenthes = p_op LeftParenthes *> expr <* p_op RightParenthes
 
-data BlockItem = StatementBlockItem Statement
+data BlockItem =
+    BlockItemS Statement
+  | BlockItemD Declaration
   deriving (Show, Eq)
 
-data Statement =   ExprStatement Expr
-                 | IfStatement Expr Statement Statement
-                 | BlkStatement [BlockItem]
-                 | NullStatement
+data Statement = 
+    StatementE  Expr
+  | StatementIf Expr Statement Statement
+  | StatementB  [BlockItem]
+  | StatementN
   deriving (Show, Eq)
 
-statement = try selection_stmt <|> try block_stmt <|> expr_stmt
+statement = try selection_stmt <|> try compound_statement <|> expr_stmt
 
 selection_stmt = do p_kwd K_If 
                     e  <- p_op LeftParenthes *> expr <* p_op RightParenthes
                     s1 <- statement
-                    s2 <- option NullStatement (p_kwd K_Else *> statement)
-                    return $ IfStatement e s1 s2
+                    s2 <- option StatementN (p_kwd K_Else *> statement)
+                    return $ StatementIf e s1 s2
 
-block_stmt = p_op LeftBrace *> block_items <* p_op RightBrace
+compound_statement = p_op LeftBrace *> block_item_list <* p_op RightBrace
 
-block_items = fmap BlkStatement $ many (StatementBlockItem <$> statement)
+block_item_list = fmap StatementB $ many block_item
+  where
+    block_item =     try (BlockItemD <$> declaration)
+                 <|>     (BlockItemS <$> statement)
 
-expr_stmt = fmap ExprStatement (option NullExpr expr <* p_op Semicolon)
+expr_stmt = fmap StatementE (option NullExpr expr <* p_op Semicolon)
 
 
 data Declaration = Declaration DeclarationSpecifier [InitDeclarator]
@@ -398,21 +404,21 @@ declarator = try decl_p <|> decl_n
     decl_n = DeclaratorN <$> direct_declarator
 
 data DirectDeclarator = 
-    DD_Ident String
-  | DD_Declarator Declarator
-  | DD_BracketE   DirectDeclarator Expr
-  | DD_ParenthesP DirectDeclarator ParameterTypeList
-  | DD_ParenthesI DirectDeclarator [String]
+    DirectDeclaratorI String
+  | DirectDeclaratorD Declarator
+  | DirectDeclaratorE DirectDeclarator Expr
+  | DirectDeclaratorP DirectDeclarator ParameterTypeList
+  | DirectDeclaratorL DirectDeclarator [String]
   deriving (Show, Eq)
 
 direct_declarator = (try ident <|> decl) >>= rest
   where
     rest p   = try (helper p >>= rest) <|> return p
-    ident    = DD_Ident <$> p_ident
-    decl     = parenthes $ DD_Declarator <$> declarator
-    helper p =     try (bracket   $ DD_BracketE   <$> return p <*> option NullExpr cond_e)
-               <|> try (parenthes $ DD_ParenthesI <$> return p <*> sepBy p_ident (p_op Comma))
-               <|> try (parenthes $ DD_ParenthesP <$> return p <*> option null_parm parameter_type_list)
+    ident    = DirectDeclaratorI <$> p_ident
+    decl     = parenthes $ DirectDeclaratorD <$> declarator
+    helper p =     try (bracket   $ DirectDeclaratorE <$> return p <*> option NullExpr cond_e)
+               <|> try (parenthes $ DirectDeclaratorL <$> return p <*> sepBy p_ident (p_op Comma))
+               <|> try (parenthes $ DirectDeclaratorP <$> return p <*> option null_parm parameter_type_list)
     bracket   = between (p_op LeftBracket)   (p_op RightBracket)
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
     null_parm = ParameterTypeList False []
@@ -421,25 +427,25 @@ data AbstractDeclarator = AbstractDeclarator Pointer DirectAbstractDeclarator
   deriving (Show, Eq)
 
 abstract_declarator =     try (AbstractDeclarator <$> pointer             <*> direct_abstract_declarator)
-                      <|> try (AbstractDeclarator <$> pointer             <*> return AD_Null)
+                      <|> try (AbstractDeclarator <$> pointer             <*> return DirectAbstractN)
                       <|>      AbstractDeclarator <$> return (Pointer []) <*> direct_abstract_declarator
 
 data DirectAbstractDeclarator =
-    AD_Abstract  AbstractDeclarator
-  | AD_Bracket   DirectAbstractDeclarator Expr
-  | AD_Parenthes DirectAbstractDeclarator ParameterTypeList
-  | AD_Null
+    DirectAbstractA AbstractDeclarator
+  | DirectAbstractB DirectAbstractDeclarator Expr
+  | DirectAbstractP DirectAbstractDeclarator ParameterTypeList
+  | DirectAbstractN
   deriving (Show, Eq)
 
 direct_abstract_declarator = head_decl >>= rest
   where
     rest p    = try (post p >>= rest) <|> return p
-    head_decl =     try (AD_Abstract <$> parenthes abstract_declarator)
-                <|> post AD_Null
+    head_decl =     try (DirectAbstractA <$> parenthes abstract_declarator)
+                <|> post DirectAbstractN
     bracket   = between (p_op LeftBracket)   (p_op RightBracket)
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
-    post p    =     try (bracket   $ AD_Bracket   <$> return p <*> option NullExpr  cond_e)
-                <|>     (parenthes $ AD_Parenthes <$> return p <*> option null_parm parameter_type_list)
+    post p    =     try (bracket   $ DirectAbstractB <$> return p <*> option NullExpr  cond_e)
+                <|>     (parenthes $ DirectAbstractP <$> return p <*> option null_parm parameter_type_list)
     null_parm = ParameterTypeList False []
 
 data ParameterTypeList = ParameterTypeList Bool [ParameterDeclaration]
@@ -491,7 +497,7 @@ function_definition = FunctionDefinition <$>
       many declaration_spec
   <*> declarator
   <*> many declaration
-  <*> block_stmt
+  <*> compound_statement
 
 data ExternalDeclaration =
     ExternalDeclarationF FunctionDefinition
