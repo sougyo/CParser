@@ -54,6 +54,10 @@ data OperatorType =
 data KeywordType = 
     K_If
   | K_Else 
+  | K_Switch
+  | K_While
+  | K_Do
+  | K_For
   | K_Void
   | K_Char
   | K_Short
@@ -73,11 +77,21 @@ data KeywordType =
   | K_Register
   | K_Const
   | K_Volatile
+  | K_Goto
+  | K_Continue
+  | K_Break
+  | K_Return
+  | K_Case
+  | K_Default
   deriving (Show, Eq)
 
 keyword_dictionary = [
   ("if"      , K_If      ),
   ("else"    , K_Else    ),
+  ("switch"  , K_Switch  ),
+  ("while"   , K_While   ),
+  ("do"      , K_Do      ),
+  ("for"     , K_For     ),
   ("void"    , K_Void    ),
   ("char"    , K_Char    ),
   ("short"   , K_Short   ),
@@ -96,7 +110,13 @@ keyword_dictionary = [
   ("auto"    , K_Auto    ),
   ("register", K_Register),
   ("const"   , K_Const   ),
-  ("volatile", K_Volatile)
+  ("volatile", K_Volatile),
+  ("goto"    , K_Goto    ),
+  ("continue", K_Continue),
+  ("break"   , K_Break   ),
+  ("return"  , K_Return  ),
+  ("case"    , K_Case    ),
+  ("default" , K_Default )
   ]
 
 data Token =   Constant String
@@ -306,19 +326,69 @@ data BlockItem =
   deriving (Show, Eq)
 
 data Statement = 
-    StatementE  Expr
-  | StatementIf Expr Statement Statement
-  | StatementB  [BlockItem]
+    StatementExpr     Expr
+  | StatementIf       Expr Statement Statement
+  | StatementSwitch   Expr Statement
+  | StatementDo       Statement Expr
+  | StatementWhile    Expr Statement
+  | StatementFor      Statement Statement Expr Statement
+  | StatementGoto     String
+  | StatementContinue
+  | StatementBreak
+  | StatementReturn   Expr
+  | StatementCase     Expr Statement
+  | StatementDefault  Statement
+  | StatementId       String Statement
+  | StatementB        [BlockItem]
   | StatementN
   deriving (Show, Eq)
 
-statement = try selection_stmt <|> try compound_statement <|> expr_stmt
+statement =     try labeled_statement
+            <|> try compound_statement
+            <|> try expression_statement
+            <|> try selection_statement
+            <|> try iteration_statement
+            <|>     jump_statement
 
-selection_stmt = do p_kwd K_If 
-                    e  <- p_op LeftParenthes *> expr <* p_op RightParenthes
-                    s1 <- statement
-                    s2 <- option StatementN (p_kwd K_Else *> statement)
-                    return $ StatementIf e s1 s2
+labeled_statement =     try case_stmt
+                    <|> try default_stmt
+                    <|>     id_stmt
+  where
+    case_stmt    = StatementCase    <$> (p_kwd K_Case *> cond_e <* p_op Colon) <*> statement
+    default_stmt = StatementDefault <$> (p_kwd K_Default *> p_op Colon *> statement)
+    id_stmt      = StatementId      <$> (p_ident <* p_op Colon) <*> statement
+
+selection_statement = try if_stmt <|> switch_stmt
+  where
+    if_stmt     = p_kwd K_If     *> (StatementIf     <$> expr_p <*> statement <*> else_p)
+    switch_stmt = p_kwd K_Switch *> (StatementSwitch <$> expr_p <*> statement)
+    expr_p      = between (p_op LeftParenthes) (p_op RightParenthes) expr
+    else_p      = option StatementN (p_kwd K_Else *> statement)
+
+iteration_statement =     try while_stmt 
+                      <|> try do_stmt
+                      <|>     for_stmt
+  where
+    while_stmt  = p_kwd K_While *> (StatementWhile <$> expr_p <*> statement)
+    do_stmt     = p_kwd K_Do    *> do_inner <* p_kwd K_While
+                    <*> expr_p <* p_op Semicolon
+    for_stmt    = p_kwd K_For   *>
+                        between (p_op LeftParenthes) (p_op RightParenthes) for_expr
+                    <*> statement
+    do_inner    = StatementDo  <$> statement
+    for_expr    = StatementFor <$> expression_statement <*> expression_statement <*> option NullExpr expr
+    expr_p      = between (p_op LeftParenthes) (p_op RightParenthes) expr
+
+jump_statement = helper <* p_op Semicolon
+  where
+    helper      =     try goto_stmt
+                  <|> try cont_stmt
+                  <|> try break_stmt
+                  <|>     return_stmt
+    goto_stmt   = StatementGoto   <$> (p_kwd K_Goto *> p_ident)
+    cont_stmt   = p_kwd K_Continue *> return StatementContinue
+    break_stmt  = p_kwd K_Break    *> return StatementBreak
+    return_stmt = StatementReturn <$> (p_kwd K_Return *> option NullExpr expr)
 
 compound_statement = p_op LeftBrace *> block_item_list <* p_op RightBrace
 
@@ -327,7 +397,7 @@ block_item_list = fmap StatementB $ many block_item
     block_item =     try (BlockItemD <$> declaration)
                  <|>     (BlockItemS <$> statement)
 
-expr_stmt = fmap StatementE (option NullExpr expr <* p_op Semicolon)
+expression_statement = StatementExpr <$> (option NullExpr expr <* p_op Semicolon)
 
 
 data Declaration = Declaration DeclarationSpecifier [InitDeclarator]
@@ -386,22 +456,19 @@ storage_class_spec = fmap StorageKeyword $
 
 type_qualifier_list = many1 type_qualifier
 
-data Pointer = Pointer [[TypeQualifier]]
+data Pointer =
+    Pointer  [[TypeQualifier]]
+  | PointerN
   deriving (Show, Eq)
 
 pointer = Pointer <$> many1 helper
   where
     helper = p_op Asterisk *> many type_qualifier
 
-data Declarator =
-    DeclaratorN DirectDeclarator
-  | DeclaratorP Pointer DirectDeclarator
+data Declarator = Declarator Pointer DirectDeclarator
   deriving (Show, Eq)
 
-declarator = try decl_p <|> decl_n
-  where
-    decl_p = DeclaratorP <$> pointer <*> direct_declarator
-    decl_n = DeclaratorN <$> direct_declarator
+declarator = Declarator <$> option PointerN pointer <*> direct_declarator
 
 data DirectDeclarator = 
     DirectDeclaratorI String
@@ -470,7 +537,6 @@ parameter_declaration =  declaration_specs >>= \d ->
                           <|> try    (ParameterDeclarationA d <$> abstract_declarator)
                           <|> return (ParameterDeclarationN d)
 
-
 data InitDeclarator =
     InitDeclaratorD Declarator
   | InitDeclaratorI Declarator Initializer
@@ -486,9 +552,9 @@ data Initializer =
   deriving (Show, Eq)
 
 initializer =     try (InitializerA <$> assignment_e)
-              <|> p_op LeftBrace *> (InitializerI <$> initializer_list) <* optional (p_op Comma) <* p_op RightBrace
+              <|> p_op LeftBrace *> initializer_list <* optional (p_op Comma) <* p_op RightBrace
   where
-    initializer_list = sepBy1 initializer $ p_op Comma
+    initializer_list = InitializerI <$> (sepBy1 initializer $ p_op Comma)
 
 data FunctionDefinition = FunctionDefinition [DeclarationSpecifier] Declarator [Declaration] Statement
   deriving (Show, Eq)
