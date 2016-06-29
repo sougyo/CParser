@@ -34,6 +34,7 @@ data OperatorType =
   | Or
   | AndAnd
   | OrOr
+  | Dot
   | Colon
   | Question
   | Equal
@@ -48,6 +49,7 @@ data OperatorType =
   | HatEqual
   | OrEqual
   | Comma
+  | Ptr
   | ThreeDots
   deriving (Show, Eq)
 
@@ -83,6 +85,7 @@ data KeywordType =
   | K_Return
   | K_Case
   | K_Default
+  | K_Sizeof
   deriving (Show, Eq)
 
 keyword_dictionary = [
@@ -116,7 +119,8 @@ keyword_dictionary = [
   ("break"   , K_Break   ),
   ("return"  , K_Return  ),
   ("case"    , K_Case    ),
-  ("default" , K_Default )
+  ("default" , K_Default ),
+  ("sizeof"  , K_Sizeof  )
   ]
 
 data Token =   Constant String
@@ -162,6 +166,7 @@ token_parser = many1 $ PosToken <$> getPosition <*> makeToken <* spaces
                 <|> try (string "&="  *> return AndEqual)
                 <|> try (string "^="  *> return HatEqual)
                 <|> try (string "|="  *> return OrEqual)
+                <|> try (string "->"  *> return Ptr)
                 <|> char '=' *> return Equal
                 <|> char '+' *> return Plus
                 <|> char '-' *> return Minus
@@ -170,12 +175,15 @@ token_parser = many1 $ PosToken <$> getPosition <*> makeToken <* spaces
                 <|> char '%' *> return Percent
                 <|> char '<' *> return LessThan
                 <|> char '>' *> return GreaterThan
+                <|> char '~' *> return Tilde
                 <|> char '&' *> return And
                 <|> char '|' *> return Or
                 <|> char '^' *> return Hat
+                <|> char '.' *> return Dot
                 <|> char ':' *> return Colon
                 <|> char ';' *> return Semicolon
                 <|> char '?' *> return Question
+                <|> char '!' *> return Exclamation
                 <|> char '(' *> return LeftParenthes
                 <|> char ')' *> return RightParenthes
                 <|> char '{' *> return LeftBrace
@@ -226,18 +234,27 @@ p_ident_s s = gen_p $ \n -> case n of
                 Identifier x -> if x == s then Just x else Nothing
                 _            -> Nothing
  
-data Expr =   EIdent  String
-            | EConst  String
-            | EString String
-            | TernaryOp Expr Expr Expr
-            | BinOp     OperatorType Expr Expr
-            | UnaryOp   OperatorType Expr
-            | PostfixOp OperatorType Expr
-            | NullExpr
+data Expr =
+    EIdent    String
+  | EConst    String
+  | EString   String
+  | TernaryOp Expr Expr Expr
+  | BinOp     OperatorType Expr Expr
+  | PostfixE  Expr Expr
+  | PostfixA  Expr [Expr]
+  | PostfixD  Expr String
+  | PostfixP  Expr String
+  | PostfixO  Expr OperatorType
+  | UnaryC    OperatorType Expr
+  | UnaryO    OperatorType Expr
+  | UnaryS    Expr
+  | UnaryT    TypeName
+  | CastU     Expr
+  | CastT     TypeName Expr
+  | NullExpr
   deriving (Show, Eq)
 
 binOp     p   = p_op p *> return (BinOp p)
-postfixOp p e = p_op p *> return (PostfixOp p e)
 
 expr = chainl1 assignment_e $ binOp Comma
 
@@ -301,24 +318,42 @@ multiplicative_e = chainl1 cast_e
   <|> binOp Slash
   <|> binOp Percent
 
-cast_e = unary_e
-
-unary_e = try (UnaryOp <$> p_op PlusPlus   <*> unary_e) <|>
-          try (UnaryOp <$> p_op MinusMinus <*> unary_e) <|>
-          postfix_e
+unary_e =     try postfix_e
+          <|> try (UnaryO <$> p_op PlusPlus   <*> unary_e)
+          <|> try (UnaryO <$> p_op MinusMinus <*> unary_e)
+          <|> try (UnaryC <$> unary_operator  <*> cast_e )
+          <|> try (UnaryS <$> (p_kwd K_Sizeof  *> unary_e))
+          <|>     (UnaryT <$> (p_kwd K_Sizeof  *>
+                     p_op LeftParenthes *> type_name <* p_op RightParenthes))
+  where
+    unary_operator =     p_op And
+                     <|> p_op Asterisk
+                     <|> p_op Plus
+                     <|> p_op Minus
+                     <|> p_op Tilde
+                     <|> p_op Exclamation
 
 postfix_e = primary_e >>= rest
   where
     rest p   = try (helper p >>= rest) <|> return p
-    helper x =     postfixOp PlusPlus x
-               <|> postfixOp MinusMinus x
-
+    helper p =     try (PostfixE p <$> (p_op LeftBracket *> expr <* p_op RightBracket))
+               <|> try (PostfixA p <$> (p_op LeftParenthes *> many assignment_e <* p_op RightParenthes))
+               <|> try (PostfixD p <$> (p_op Dot *> p_ident))
+               <|> try (PostfixP p <$> (p_op Ptr *> p_ident))
+               <|>     (PostfixO p <$> (p_op PlusPlus <|> p_op MinusMinus))
+    
 primary_e = try e_const <|> try e_ident <|> try e_string <|> e_parenthes
   where
     e_const  = EConst  <$> p_const
     e_ident  = EIdent  <$> p_ident
     e_string = EString <$> p_string
     e_parenthes = p_op LeftParenthes *> expr <* p_op RightParenthes
+
+cast_e = try unary_p <|> type_p
+  where
+    unary_p = CastU <$> unary_e
+    type_p  = CastT <$>
+                (p_op LeftParenthes *> type_name <* p_op RightParenthes) <*> cast_e
 
 data BlockItem =
     BlockItemS Statement
@@ -399,7 +434,6 @@ block_item_list = fmap StatementB $ many block_item
 
 expression_statement = StatementExpr <$> (option NullExpr expr <* p_op Semicolon)
 
-
 data Declaration = Declaration DeclarationSpecifier [InitDeclarator]
   deriving (Show, Eq)
 
@@ -407,57 +441,75 @@ declaration = Declaration <$> declaration_spec <*> init_declarator_list <* p_op 
   where
     init_declarator_list = sepBy init_declarator (p_op Comma)
 
+data TypeName = TypeName [DeclarationSpecifier] AbstractDeclarator
+  deriving (Show, Eq)
+
+type_name = TypeName <$>
+              specifier_qualifier_list <*> option AbstractDeclaratorN abstract_declarator
+
+specifier_qualifier_list = many1 $
+  try type_spec <|> type_qualifier
+
 data DeclarationSpecifier =
-    DS_Type      TypeSpecifier
-  | DS_Qualifier TypeQualifier
-  | DS_Storage   TypeStorage
+    TypeSpecifier KeywordType
+  | TypeQualifier KeywordType
+  | TypeStorage   KeywordType
+  | TypeStructUnion KeywordType String [StructDeclaration]
   deriving (Show, Eq)
 
 declaration_specs = many1 declaration_spec
 
 declaration_spec = 
-      try (DS_Type      <$> type_spec)
-  <|> try (DS_Qualifier <$> type_qualifier)
-  <|>      DS_Storage   <$> storage_class_spec
+      try type_spec
+  <|> try type_qualifier
+  <|>     storage_class_spec
 
-data TypeSpecifier =
-    TypeKeyword KeywordType
-  deriving (Show, Eq)
+type_spec =
+      try (fmap TypeSpecifier $
+                p_kwd K_Void
+            <|> p_kwd K_Char
+            <|> p_kwd K_Short
+            <|> p_kwd K_Int
+            <|> p_kwd K_Long
+            <|> p_kwd K_Float
+            <|> p_kwd K_Double
+            <|> p_kwd K_Signed
+            <|> p_kwd K_Unsigned)
+  <|> try struct_or_union_specifier
 
-data TypeQualifier =
-    QualifierKeyword KeywordType
-  deriving (Show, Eq)
-
-data TypeStorage =
-    StorageKeyword KeywordType
-  deriving (Show, Eq)
-
-type_spec = fmap TypeKeyword $ 
-      p_kwd K_Void
-  <|> p_kwd K_Char
-  <|> p_kwd K_Short
-  <|> p_kwd K_Int
-  <|> p_kwd K_Long
-  <|> p_kwd K_Float
-  <|> p_kwd K_Double
-  <|> p_kwd K_Signed
-  <|> p_kwd K_Unsigned
-
-type_qualifier = fmap QualifierKeyword $
+type_qualifier = fmap TypeQualifier $
       p_kwd K_Const
   <|> p_kwd K_Volatile
 
-storage_class_spec = fmap StorageKeyword $
+storage_class_spec = fmap TypeStorage $
       p_kwd K_Typedef
   <|> p_kwd K_Extern
   <|> p_kwd K_Static
   <|> p_kwd K_Auto
   <|> p_kwd K_Register
 
+data StructUnionSpecifier = StructUnionSpecifier 
+  deriving (Show, Eq)
+
+struct_or_union_specifier = (p_kwd K_Struct <|> p_kwd K_Union) >>= \k ->
+      try (TypeStructUnion k <$> option [] p_ident <*> (p_op LeftBrace *> many1 struct_declaration <* p_op RightBrace))
+  <|>     (TypeStructUnion k <$> p_ident           <*> return [])
+
+data StructDeclaration = StructDeclaration [DeclarationSpecifier] [StructDeclarator]
+  deriving (Show, Eq)
+
+struct_declaration = StructDeclaration <$> specifier_qualifier_list <*> sepBy1 struct_declarator (p_op Comma)
+
+data StructDeclarator = StructDeclarator Declarator Expr
+  deriving (Show, Eq)
+
+struct_declarator =    try (StructDeclarator <$> declarator <*> return NullExpr)
+                   <|>     (StructDeclarator <$> option DeclaratorN declarator <* p_op Colon <*> cond_e)
+
 type_qualifier_list = many1 type_qualifier
 
 data Pointer =
-    Pointer  [[TypeQualifier]]
+    Pointer  [[DeclarationSpecifier]]
   | PointerN
   deriving (Show, Eq)
 
@@ -465,7 +517,9 @@ pointer = Pointer <$> many1 helper
   where
     helper = p_op Asterisk *> many type_qualifier
 
-data Declarator = Declarator Pointer DirectDeclarator
+data Declarator =
+    Declarator  Pointer DirectDeclarator
+  | DeclaratorN
   deriving (Show, Eq)
 
 declarator = Declarator <$> option PointerN pointer <*> direct_declarator
@@ -490,7 +544,9 @@ direct_declarator = (try ident <|> decl) >>= rest
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
     null_parm = ParameterTypeList False []
 
-data AbstractDeclarator = AbstractDeclarator Pointer DirectAbstractDeclarator
+data AbstractDeclarator =
+    AbstractDeclarator  Pointer DirectAbstractDeclarator
+  | AbstractDeclaratorN
   deriving (Show, Eq)
 
 abstract_declarator =     try (AbstractDeclarator <$> pointer             <*> direct_abstract_declarator)
