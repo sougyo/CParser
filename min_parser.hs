@@ -123,12 +123,13 @@ keyword_dictionary = [
   ("sizeof"  , K_Sizeof  )
   ]
 
-data Token =   Constant String
-             | Identifier String
-             | StringLiteral String
-             | Operator OperatorType
-             | Keyword KeywordType
-             | NullToken
+data Token =
+    Constant String
+  | Identifier String
+  | StringLiteral String
+  | Operator OperatorType
+  | Keyword KeywordType
+  | NullToken
   deriving (Show, Eq)
 
 data PosToken = PosToken {
@@ -139,57 +140,59 @@ data PosToken = PosToken {
 token_parser = fmap reject_null . many1 $ PosToken <$> getPosition <*> makeToken <* spaces
   where
     reject_null = filter $ \t -> get_token t /= NullToken
-    makeToken =     try comment
-                <|> try (Constant <$> many1 digit)
-                <|> try keyword_or_identifier
-                <|> try (StringLiteral <$> string_literal)
-                <|> Operator <$> operator
-    operator  =     try (string "..." *> return ThreeDots)
-                <|> try (string "++"  *> return PlusPlus)
-                <|> try (string "--"  *> return MinusMinus)
-                <|> try (string "<<"  *> return LeftShift)
-                <|> try (string ">>"  *> return RightShift)
-                <|> try (string "<="  *> return LessThanEqual)
-                <|> try (string ">="  *> return GreaterThanEqual)
-                <|> try (string "!="  *> return NotEqual)
-                <|> try (string "=="  *> return EqualEqual)
-                <|> try (string "&&"  *> return AndAnd)
-                <|> try (string "||"  *> return OrOr)
-                <|> try (string "*="  *> return AsteriskEqual)
-                <|> try (string "/="  *> return SlashEqual)
-                <|> try (string "%="  *> return PercentEqual)
-                <|> try (string "+="  *> return PlusEqual)
-                <|> try (string "-="  *> return MinusEqual)
-                <|> try (string "<<=" *> return LeftShiftEqual)
-                <|> try (string ">>=" *> return RightShiftEqual)
-                <|> try (string "&="  *> return AndEqual)
-                <|> try (string "^="  *> return HatEqual)
-                <|> try (string "|="  *> return OrEqual)
-                <|> try (string "->"  *> return Ptr)
-                <|> char '=' *> return Equal
-                <|> char '+' *> return Plus
-                <|> char '-' *> return Minus
-                <|> char '*' *> return Asterisk
-                <|> char '/' *> return Slash
-                <|> char '%' *> return Percent
-                <|> char '<' *> return LessThan
-                <|> char '>' *> return GreaterThan
-                <|> char '~' *> return Tilde
-                <|> char '&' *> return And
-                <|> char '|' *> return Or
-                <|> char '^' *> return Hat
-                <|> char '.' *> return Dot
-                <|> char ':' *> return Colon
-                <|> char ';' *> return Semicolon
-                <|> char '?' *> return Question
-                <|> char '!' *> return Exclamation
-                <|> char '(' *> return LeftParenthes
-                <|> char ')' *> return RightParenthes
-                <|> char '{' *> return LeftBrace
-                <|> char '}' *> return RightBrace
-                <|> char '[' *> return LeftBracket
-                <|> char ']' *> return RightBracket
-                <|> char ',' *> return Comma
+    makeToken =
+          try comment
+      <|> try (Constant <$> many1 digit)
+      <|> try keyword_or_identifier
+      <|> try (StringLiteral <$> string_literal)
+      <|> Operator <$> operator
+    operator  =
+          try (string "..." *> return ThreeDots)
+      <|> try (string "++"  *> return PlusPlus)
+      <|> try (string "--"  *> return MinusMinus)
+      <|> try (string "<<"  *> return LeftShift)
+      <|> try (string ">>"  *> return RightShift)
+      <|> try (string "<="  *> return LessThanEqual)
+      <|> try (string ">="  *> return GreaterThanEqual)
+      <|> try (string "!="  *> return NotEqual)
+      <|> try (string "=="  *> return EqualEqual)
+      <|> try (string "&&"  *> return AndAnd)
+      <|> try (string "||"  *> return OrOr)
+      <|> try (string "*="  *> return AsteriskEqual)
+      <|> try (string "/="  *> return SlashEqual)
+      <|> try (string "%="  *> return PercentEqual)
+      <|> try (string "+="  *> return PlusEqual)
+      <|> try (string "-="  *> return MinusEqual)
+      <|> try (string "<<=" *> return LeftShiftEqual)
+      <|> try (string ">>=" *> return RightShiftEqual)
+      <|> try (string "&="  *> return AndEqual)
+      <|> try (string "^="  *> return HatEqual)
+      <|> try (string "|="  *> return OrEqual)
+      <|> try (string "->"  *> return Ptr)
+      <|> char '=' *> return Equal
+      <|> char '+' *> return Plus
+      <|> char '-' *> return Minus
+      <|> char '*' *> return Asterisk
+      <|> char '/' *> return Slash
+      <|> char '%' *> return Percent
+      <|> char '<' *> return LessThan
+      <|> char '>' *> return GreaterThan
+      <|> char '~' *> return Tilde
+      <|> char '&' *> return And
+      <|> char '|' *> return Or
+      <|> char '^' *> return Hat
+      <|> char '.' *> return Dot
+      <|> char ':' *> return Colon
+      <|> char ';' *> return Semicolon
+      <|> char '?' *> return Question
+      <|> char '!' *> return Exclamation
+      <|> char '(' *> return LeftParenthes
+      <|> char ')' *> return RightParenthes
+      <|> char '{' *> return LeftBrace
+      <|> char '}' *> return RightBrace
+      <|> char '[' *> return LeftBracket
+      <|> char ']' *> return RightBracket
+      <|> char ',' *> return Comma
 
 comment = string "/*" *> helper
   where
@@ -207,15 +210,16 @@ string_literal = char '"' *> s_char_sequence <* char '"'
   where
     s_char_sequence = many1 (s_char <|> escape_sequence)
     s_char = noneOf "\n\"\\"
-    escape_sequence =     try (string "\\'"  *> return '\'')
-                      <|> try (string "\\\"" *> return '"' )
-                      <|> try (string "\\a"  *> return '\a')
-                      <|> try (string "\\b"  *> return '\b')
-                      <|> try (string "\\f"  *> return '\f')
-                      <|> try (string "\\n"  *> return '\n')
-                      <|> try (string "\\r"  *> return '\r')
-                      <|> try (string "\\t"  *> return '\t')
-                      <|>      string "\\v"  *> return '\v'
+    escape_sequence =
+          try (string "\\'"  *> return '\'')
+      <|> try (string "\\\"" *> return '"' )
+      <|> try (string "\\a"  *> return '\a')
+      <|> try (string "\\b"  *> return '\b')
+      <|> try (string "\\f"  *> return '\f')
+      <|> try (string "\\n"  *> return '\n')
+      <|> try (string "\\r"  *> return '\r')
+      <|> try (string "\\t"  *> return '\t')
+      <|>      string "\\v"  *> return '\v'
 
 gen_p m = tokenPrim (\c -> show c) (\pos c _cs -> get_pos c) $ m . get_token
 p_const  = gen_p $ \n -> case n of
@@ -366,11 +370,12 @@ primary_e =
 postfix_e = primary_e >>= rest
   where
     rest p   = try (helper p >>= rest) <|> return p
-    helper p =     try (PostfixE p <$> (p_op LeftBracket *> expression <* p_op RightBracket))
-               <|> try (PostfixA p <$> (p_op LeftParenthes *> argument_expression_list <* p_op RightParenthes))
-               <|> try (PostfixD p <$> (p_op Dot *> p_ident))
-               <|> try (PostfixP p <$> (p_op Ptr *> p_ident))
-               <|>     (PostfixO p <$> (p_op PlusPlus <|> p_op MinusMinus))
+    helper p = 
+          try (PostfixE p <$> (p_op LeftBracket *> expression <* p_op RightBracket))
+      <|> try (PostfixA p <$> (p_op LeftParenthes *> argument_expression_list <* p_op RightParenthes))
+      <|> try (PostfixD p <$> (p_op Dot *> p_ident))
+      <|> try (PostfixP p <$> (p_op Ptr *> p_ident))
+      <|>     (PostfixO p <$> (p_op PlusPlus <|> p_op MinusMinus))
     argument_expression_list = sepBy assignment_e (p_op Comma)
 
 unary_e =
@@ -382,12 +387,13 @@ unary_e =
   <|>     (UnaryT <$> (p_kwd K_Sizeof  *>
              p_op LeftParenthes *> type_name <* p_op RightParenthes))
   where
-    unary_operator =     p_op And
-                     <|> p_op Asterisk
-                     <|> p_op Plus
-                     <|> p_op Minus
-                     <|> p_op Tilde
-                     <|> p_op Exclamation
+    unary_operator =
+          p_op And
+      <|> p_op Asterisk
+      <|> p_op Plus
+      <|> p_op Minus
+      <|> p_op Tilde
+      <|> p_op Exclamation
 
 cast_e = try unary_p <|> type_p
   where
@@ -443,17 +449,18 @@ assignment_e = try assign_e <|> cond_e
     assign_e = do u  <- unary_e
                   op <- assign_op
                   op u <$> assignment_e
-    assign_op = binOp Equal           <|>
-                binOp AsteriskEqual   <|>
-                binOp SlashEqual      <|>
-                binOp PercentEqual    <|>
-                binOp PlusEqual       <|>
-                binOp MinusEqual      <|>
-                binOp LeftShiftEqual  <|>
-                binOp RightShiftEqual <|>
-                binOp AndEqual        <|>
-                binOp HatEqual        <|>
-                binOp OrEqual
+    assign_op =
+          binOp Equal
+      <|> binOp AsteriskEqual
+      <|> binOp SlashEqual
+      <|> binOp PercentEqual
+      <|> binOp PlusEqual
+      <|> binOp MinusEqual
+      <|> binOp LeftShiftEqual
+      <|> binOp RightShiftEqual
+      <|> binOp AndEqual
+      <|> binOp HatEqual
+      <|> binOp OrEqual
 
 expression = chainl1 assignment_e $ binOp Comma
 
@@ -520,16 +527,15 @@ direct_declarator = (try ident <|> decl) >>= rest
     rest p   = try (helper p >>= rest) <|> return p
     ident    = DirectDeclaratorI <$> p_ident
     decl     = parenthes $ DirectDeclaratorD <$> declarator
-    helper p =     try (bracket   $ DirectDeclaratorE <$> return p <*> option NullExpr cond_e)
-               <|> try (parenthes $ DirectDeclaratorL <$> return p <*> sepBy p_ident (p_op Comma))
-               <|> try (parenthes $ DirectDeclaratorP <$> return p <*> option null_parm parameter_type_list)
+    helper p =
+          try (bracket   $ DirectDeclaratorE <$> return p <*> option NullExpr cond_e)
+      <|> try (parenthes $ DirectDeclaratorL <$> return p <*> sepBy p_ident (p_op Comma))
+      <|> try (parenthes $ DirectDeclaratorP <$> return p <*> option null_parm parameter_type_list)
     bracket   = between (p_op LeftBracket)   (p_op RightBracket)
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
     null_parm = ParameterTypeList False []
 
-pointer = Pointer <$> many1 helper
-  where
-    helper = p_op Asterisk *> many type_qualifier
+pointer = Pointer <$> many1 (p_op Asterisk *> many type_qualifier)
 
 type_qualifier_list = many1 type_qualifier
 
@@ -557,16 +563,19 @@ abstract_declarator =
 direct_abstract_declarator = head_decl >>= rest
   where
     rest p    = try (post p >>= rest) <|> return p
-    head_decl =     try (DirectAbstractA <$> parenthes abstract_declarator)
-                <|> post DirectAbstractN
+    head_decl =
+          try (DirectAbstractA <$> parenthes abstract_declarator)
+      <|> post DirectAbstractN
     bracket   = between (p_op LeftBracket)   (p_op RightBracket)
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
-    post p    =     try (bracket   $ DirectAbstractB <$> return p <*> option NullExpr  cond_e)
-                <|>     (parenthes $ DirectAbstractP <$> return p <*> option null_parm parameter_type_list)
+    post p    =
+          try (bracket   $ DirectAbstractB <$> return p <*> option NullExpr  cond_e)
+      <|>     (parenthes $ DirectAbstractP <$> return p <*> option null_parm parameter_type_list)
     null_parm = ParameterTypeList False []
 
-initializer =     try (InitializerA <$> assignment_e)
-              <|> p_op LeftBrace *> initializer_list <* optional (p_op Comma) <* p_op RightBrace
+initializer =
+      try (InitializerA <$> assignment_e)
+  <|>      p_op LeftBrace *> initializer_list <* optional (p_op Comma) <* p_op RightBrace
   where
     initializer_list = InitializerI <$> (sepBy1 initializer $ p_op Comma)
 
@@ -594,8 +603,9 @@ compound_statement = p_op LeftBrace *> block_item_list <* p_op RightBrace
 
 block_item_list = fmap StatementB $ many block_item
   where
-    block_item =     try (BlockItemD <$> declaration)
-                 <|>     (BlockItemS <$> statement)
+    block_item =
+          try (BlockItemD <$> declaration)
+      <|>     (BlockItemS <$> statement)
 
 expression_statement = StatementExpr <$> (option NullExpr expression <* p_op Semicolon)
 
@@ -623,10 +633,11 @@ iteration_statement =
 
 jump_statement = helper <* p_op Semicolon
   where
-    helper      =     try goto_stmt
-                  <|> try cont_stmt
-                  <|> try break_stmt
-                  <|>     return_stmt
+    helper =
+          try goto_stmt
+      <|> try cont_stmt
+      <|> try break_stmt
+      <|>     return_stmt
     goto_stmt   = StatementGoto   <$> (p_kwd K_Goto *> p_ident)
     cont_stmt   = p_kwd K_Continue *> return StatementContinue
     break_stmt  = p_kwd K_Break    *> return StatementBreak
