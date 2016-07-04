@@ -128,6 +128,7 @@ data Token =   Constant String
              | StringLiteral String
              | Operator OperatorType
              | Keyword KeywordType
+             | NullToken
   deriving (Show, Eq)
 
 data PosToken = PosToken {
@@ -135,9 +136,11 @@ data PosToken = PosToken {
   get_token :: Token 
 } deriving (Show, Eq)
 
-token_parser = many1 $ PosToken <$> getPosition <*> makeToken <* spaces
+token_parser = fmap reject_null . many1 $ PosToken <$> getPosition <*> makeToken <* spaces
   where
-    makeToken =     try (Constant <$> many1 digit)
+    reject_null = filter $ \t -> get_token t /= NullToken
+    makeToken =     try comment
+                <|> try (Constant <$> many1 digit)
                 <|> try keyword_or_identifier
                 <|> try (StringLiteral <$> string_literal)
                 <|> Operator <$> operator
@@ -188,6 +191,10 @@ token_parser = many1 $ PosToken <$> getPosition <*> makeToken <* spaces
                 <|> char ']' *> return RightBracket
                 <|> char ',' *> return Comma
 
+comment = string "/*" *> helper
+  where
+    helper = try (string "*/" *> return NullToken) <|> anyChar *> helper
+
 keyword_or_identifier = fmap choose identifier_str
   where
     choose s = case lookup s keyword_dictionary of
@@ -226,9 +233,6 @@ p_op p   = gen_p $ \n -> if n == Operator p
 p_kwd p  = gen_p $ \n -> if n == Keyword p
               then Just p
               else Nothing
-p_ident_s s = gen_p $ \n -> case n of
-                Identifier x -> if x == s then Just x else Nothing
-                _            -> Nothing
  
 data Expr =
     EIdent    String
@@ -353,12 +357,11 @@ data FunctionDefinition = FunctionDefinition [DeclarationSpecifier] Declarator [
 
 binOp p = BinOp <$> p_op p
 
-primary_e = try e_const <|> try e_ident <|> try e_string <|> e_parenthes
-  where
-    e_const  = EConst  <$> p_const
-    e_ident  = EIdent  <$> p_ident
-    e_string = EString <$> p_string
-    e_parenthes = p_op LeftParenthes *> expression <* p_op RightParenthes
+primary_e =
+      try (EConst  <$> p_const)
+  <|> try (EIdent  <$> p_ident)
+  <|> try (EString <$> p_string)
+  <|>      p_op LeftParenthes *> expression <* p_op RightParenthes
 
 postfix_e = primary_e >>= rest
   where
@@ -370,13 +373,14 @@ postfix_e = primary_e >>= rest
                <|>     (PostfixO p <$> (p_op PlusPlus <|> p_op MinusMinus))
     argument_expression_list = sepBy assignment_e (p_op Comma)
 
-unary_e =     try postfix_e
-          <|> try (UnaryO <$> p_op PlusPlus   <*> unary_e)
-          <|> try (UnaryO <$> p_op MinusMinus <*> unary_e)
-          <|> try (UnaryC <$> unary_operator  <*> cast_e )
-          <|> try (UnaryS <$> (p_kwd K_Sizeof  *> unary_e))
-          <|>     (UnaryT <$> (p_kwd K_Sizeof  *>
-                     p_op LeftParenthes *> type_name <* p_op RightParenthes))
+unary_e =
+      try postfix_e
+  <|> try (UnaryO <$> p_op PlusPlus   <*> unary_e)
+  <|> try (UnaryO <$> p_op MinusMinus <*> unary_e)
+  <|> try (UnaryC <$> unary_operator  <*> cast_e )
+  <|> try (UnaryS <$> (p_kwd K_Sizeof  *> unary_e))
+  <|>     (UnaryT <$> (p_kwd K_Sizeof  *>
+             p_op LeftParenthes *> type_name <* p_op RightParenthes))
   where
     unary_operator =     p_op And
                      <|> p_op Asterisk
@@ -461,13 +465,13 @@ declaration = Declaration <$> declaration_specs <*> init_declarator_list <* p_op
     init_declarator_list = sepBy init_declarator (p_op Comma)
 
 declaration_specs = many1 $
-      try type_spec
-  <|> try type_qualifier
-  <|>     storage_class_spec
+      try type_qualifier
+  <|> try storage_class_spec
+  <|>     type_spec
 
 init_declarator = declarator >>= \d ->
-                        try    (InitDeclaratorI d <$> (p_op Equal *> initializer))
-                    <|> return (InitDeclaratorD d)
+      try (InitDeclaratorI d <$> (p_op Equal *> initializer))
+  <|>      return (InitDeclaratorD d)
 
 storage_class_spec = fmap TypeStorage $
       p_kwd K_Typedef
@@ -477,18 +481,21 @@ storage_class_spec = fmap TypeStorage $
   <|> p_kwd K_Register
 
 type_spec =
-      try (fmap TypeSpecifier $
-                p_kwd K_Void
-            <|> p_kwd K_Char
-            <|> p_kwd K_Short
-            <|> p_kwd K_Int
-            <|> p_kwd K_Long
-            <|> p_kwd K_Float
-            <|> p_kwd K_Double
-            <|> p_kwd K_Signed
-            <|> p_kwd K_Unsigned)
-  <|> try struct_or_union_specifier
+      try (TypeSpecifier <$> k_type_specifier)
+  <|>      struct_or_union_specifier
 --  <|>     (TypeTypedef <$> p_ident)
+  where
+    k_type_specifier = 
+          p_kwd K_Void
+      <|> p_kwd K_Char
+      <|> p_kwd K_Short
+      <|> p_kwd K_Int
+      <|> p_kwd K_Long
+      <|> p_kwd K_Float
+      <|> p_kwd K_Double
+      <|> p_kwd K_Signed
+      <|> p_kwd K_Unsigned
+
 
 struct_or_union_specifier = (p_kwd K_Struct <|> p_kwd K_Union) >>= \k ->
       try (TypeStructUnion k <$> option [] p_ident <*> (p_op LeftBrace *> many1 struct_declaration <* p_op RightBrace))
@@ -496,11 +503,11 @@ struct_or_union_specifier = (p_kwd K_Struct <|> p_kwd K_Union) >>= \k ->
 
 struct_declaration = StructDeclaration <$> specifier_qualifier_list <*> sepBy1 struct_declarator (p_op Comma)
 
-specifier_qualifier_list = many1 $
-  try type_spec <|> type_qualifier
+specifier_qualifier_list = many1 $ try type_qualifier <|> type_spec
 
-struct_declarator =    try (StructDeclarator <$> declarator <*> return NullExpr)
-                   <|>     (StructDeclarator <$> option DeclaratorN declarator <* p_op Colon <*> cond_e)
+struct_declarator =
+      try (StructDeclarator <$> declarator <*> return NullExpr)
+  <|>     (StructDeclarator <$> option DeclaratorN declarator <* p_op Colon <*> cond_e)
 
 type_qualifier = fmap TypeQualifier $
       p_kwd K_Const
@@ -527,24 +534,25 @@ pointer = Pointer <$> many1 helper
 type_qualifier_list = many1 type_qualifier
 
 parameter_type_list = parameter_list >>= \p ->
-                        try (ellipsis *> return (ParameterTypeList True  p)) <|>
-                                         return (ParameterTypeList False p)
+      try (ellipsis *> return (ParameterTypeList True  p))
+  <|> return (ParameterTypeList False p)
   where
     ellipsis = p_op Comma *> p_op ThreeDots
 
 parameter_list = sepBy1 parameter_declaration $ p_op Comma
 
 parameter_declaration =  declaration_specs >>= \d ->
-                              try    (ParameterDeclarationD d <$> declarator)
-                          <|> try    (ParameterDeclarationA d <$> abstract_declarator)
-                          <|> return (ParameterDeclarationN d)
+      try    (ParameterDeclarationD d <$> declarator)
+  <|> try    (ParameterDeclarationA d <$> abstract_declarator)
+  <|> return (ParameterDeclarationN d)
 
 type_name = TypeName <$>
               specifier_qualifier_list <*> option AbstractDeclaratorN abstract_declarator
 
-abstract_declarator =     try (AbstractDeclarator <$> pointer             <*> direct_abstract_declarator)
-                      <|> try (AbstractDeclarator <$> pointer             <*> return DirectAbstractN)
-                      <|>      AbstractDeclarator <$> return (Pointer []) <*> direct_abstract_declarator
+abstract_declarator = 
+      try (AbstractDeclarator <$> pointer             <*> direct_abstract_declarator)
+  <|> try (AbstractDeclarator <$> pointer             <*> return DirectAbstractN)
+  <|>      AbstractDeclarator <$> return (Pointer []) <*> direct_abstract_declarator
 
 direct_abstract_declarator = head_decl >>= rest
   where
@@ -565,16 +573,18 @@ initializer =     try (InitializerA <$> assignment_e)
 
 -- Statements
 
-statement =     try labeled_statement
-            <|> try compound_statement
-            <|> try expression_statement
-            <|> try selection_statement
-            <|> try iteration_statement
-            <|>     jump_statement
+statement =
+      try labeled_statement
+  <|> try compound_statement
+  <|> try expression_statement
+  <|> try selection_statement
+  <|> try iteration_statement
+  <|>     jump_statement
 
-labeled_statement =     try case_stmt
-                    <|> try default_stmt
-                    <|>     id_stmt
+labeled_statement =
+      try case_stmt
+  <|> try default_stmt
+  <|>     id_stmt
   where
     case_stmt    = StatementCase    <$> (p_kwd K_Case *> cond_e <* p_op Colon) <*> statement
     default_stmt = StatementDefault <$> (p_kwd K_Default *> p_op Colon *> statement)
@@ -596,9 +606,10 @@ selection_statement = try if_stmt <|> switch_stmt
     expr_p      = between (p_op LeftParenthes) (p_op RightParenthes) expression
     else_p      = option StatementN (p_kwd K_Else *> statement)
 
-iteration_statement =     try while_stmt 
-                      <|> try do_stmt
-                      <|>     for_stmt
+iteration_statement =
+      try while_stmt 
+  <|> try do_stmt
+  <|>     for_stmt
   where
     while_stmt  = p_kwd K_While *> (StatementWhile <$> expr_p <*> statement)
     do_stmt     = p_kwd K_Do    *> do_inner <* p_kwd K_While
