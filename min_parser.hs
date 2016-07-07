@@ -1,8 +1,9 @@
-import Text.ParserCombinators.Parsec
 import Control.Applicative ((<*), (*>), (<*>), (<$>))
 import Text.Parsec.Prim (tokenPrim, getPosition)
 import Text.Parsec.Pos (SourcePos)
 import Control.Monad (sequence, when)
+import Control.Monad.State.Lazy
+import Text.Parsec
 
 data OperatorType = 
     LeftParenthes
@@ -221,7 +222,7 @@ string_literal = char '"' *> s_char_sequence <* char '"'
       <|> try (string "\\t"  *> return '\t')
       <|>      string "\\v"  *> return '\v'
 
-gen_p m = tokenPrim (\c -> show c) (\pos c _cs -> get_pos c) $ m . get_token
+gen_p f  = tokenPrim (\c -> show c) (\pos c _cs -> get_pos c) $ f . get_token
 p_const  = gen_p $ \n -> case n of
               Constant s -> Just s
               _          -> Nothing
@@ -237,6 +238,10 @@ p_op p   = gen_p $ \n -> if n == Operator p
 p_kwd p  = gen_p $ \n -> if n == Keyword p
               then Just p
               else Nothing
+oneOf_kwd kwds = gen_p $ \n -> case n of
+              Keyword k -> if elem k kwds then Just k else Nothing
+              _         -> Nothing
+parse_fail = gen_p $ \_ -> Nothing
  
 data Expr =
     EIdent    String
@@ -480,31 +485,36 @@ init_declarator = declarator >>= \d ->
       try (InitDeclaratorI d <$> (p_op Equal *> initializer))
   <|>      return (InitDeclaratorD d)
 
-storage_class_spec = fmap TypeStorage $
-      p_kwd K_Typedef
-  <|> p_kwd K_Extern
-  <|> p_kwd K_Static
-  <|> p_kwd K_Auto
-  <|> p_kwd K_Register
+storage_class_spec = fmap TypeStorage $ oneOf_kwd
+  [ K_Typedef ,
+    K_Extern  ,
+    K_Static  ,
+    K_Auto    ,
+    K_Register
+  ]
 
 type_spec =
       try (TypeSpecifier <$> k_type_specifier)
-  <|>      struct_or_union_specifier
---  <|>     (TypeTypedef <$> p_ident)
+  <|> try (struct_or_union_specifier)
+  <|>      typedef_p
   where
-    k_type_specifier = 
-          p_kwd K_Void
-      <|> p_kwd K_Char
-      <|> p_kwd K_Short
-      <|> p_kwd K_Int
-      <|> p_kwd K_Long
-      <|> p_kwd K_Float
-      <|> p_kwd K_Double
-      <|> p_kwd K_Signed
-      <|> p_kwd K_Unsigned
+    k_type_specifier = oneOf_kwd
+      [ K_Void    ,
+        K_Char    ,
+        K_Short   ,
+        K_Int     ,
+        K_Long    ,
+        K_Float   ,
+        K_Double  ,
+        K_Signed  ,
+        K_Unsigned
+      ]
+    typedef_p = try $
+      do p   <- p_ident
+         kws <- lift get
+         if elem p kws then return (TypeTypedef p) else parse_fail
 
-
-struct_or_union_specifier = (p_kwd K_Struct <|> p_kwd K_Union) >>= \k ->
+struct_or_union_specifier = oneOf_kwd [K_Struct, K_Union] >>= \k ->
       try (TypeStructUnion k <$> option [] p_ident <*> (p_op LeftBrace *> many1 struct_declaration <* p_op RightBrace))
   <|>     (TypeStructUnion k <$> p_ident           <*> return [])
 
@@ -516,9 +526,7 @@ struct_declarator =
       try (StructDeclarator <$> declarator <*> return NullExpr)
   <|>     (StructDeclarator <$> option DeclaratorN declarator <* p_op Colon <*> cond_e)
 
-type_qualifier = fmap TypeQualifier $
-      p_kwd K_Const
-  <|> p_kwd K_Volatile
+type_qualifier = fmap TypeQualifier $ oneOf_kwd [K_Const, K_Volatile]
 
 declarator = Declarator <$> option PointerN pointer <*> direct_declarator
 
@@ -530,7 +538,7 @@ direct_declarator = (try ident <|> decl) >>= rest
     helper p =
           try (bracket   $ DirectDeclaratorE <$> return p <*> option NullExpr cond_e)
       <|> try (parenthes $ DirectDeclaratorL <$> return p <*> sepBy p_ident (p_op Comma))
-      <|> try (parenthes $ DirectDeclaratorP <$> return p <*> option null_parm parameter_type_list)
+      <|>     (parenthes $ DirectDeclaratorP <$> return p <*> option null_parm parameter_type_list)
     bracket   = between (p_op LeftBracket)   (p_op RightBracket)
     parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
     null_parm = ParameterTypeList False []
@@ -541,7 +549,7 @@ type_qualifier_list = many1 type_qualifier
 
 parameter_type_list = parameter_list >>= \p ->
       try (ellipsis *> return (ParameterTypeList True  p))
-  <|> return (ParameterTypeList False p)
+  <|>      return (ParameterTypeList False p)
   where
     ellipsis = p_op Comma *> p_op ThreeDots
 
@@ -622,12 +630,11 @@ iteration_statement =
   <|>     for_stmt
   where
     while_stmt  = p_kwd K_While *> (StatementWhile <$> expr_p <*> statement)
-    do_stmt     = p_kwd K_Do    *> do_inner <* p_kwd K_While
-                    <*> expr_p  <* p_op Semicolon
+    do_stmt     = p_kwd K_Do    *> (StatementDo  <$> statement)
+                    <* p_kwd K_While <*> expr_p  <* p_op Semicolon
     for_stmt    = p_kwd K_For   *>
                         between (p_op LeftParenthes) (p_op RightParenthes) for_expr
                     <*> statement
-    do_inner    = StatementDo  <$> statement
     for_expr    = StatementFor <$> expression_statement <*> expression_statement <*> option NullExpr expression
     expr_p      = between (p_op LeftParenthes) (p_op RightParenthes) expression
 
@@ -664,8 +671,10 @@ function_definition = FunctionDefinition <$>
 min_parser = translation_unit <* eof
 
 run input = case parse (spaces *> token_parser <* eof) "" input of
-              Right val -> putStrLn $ show $ parse min_parser "" val
+              Right val -> putStrLn $ show $ helper val
               Left  err -> putStrLn $ show err
+  where
+    helper val = evalState (runParserT min_parser () "" val) []
 
 main = getContents >>= run
 
