@@ -539,13 +539,14 @@ struct_or_union_specifier = oneOf_kwd [K_Struct, K_Union] >>= \k ->
       try (TypeStructUnion k <$> option [] p_ident <*> between_braces (many1 struct_declaration))
   <|>     (TypeStructUnion k <$> p_ident           <*> return [])
 
-struct_declaration = StructDeclaration <$> specifier_qualifier_list <*> sepBy1 struct_declarator (p_op Comma)
+struct_declaration = StructDeclaration <$> specifier_qualifier_list
+                       <*> sepBy1 struct_declarator (p_op Comma) <* p_op Semicolon
 
 specifier_qualifier_list = many1 $ try type_qualifier <|> type_spec
 
 struct_declarator =
-      try (StructDeclarator <$> declarator <*> return NullExpr)
-  <|>     (StructDeclarator <$> option DeclaratorN declarator <* p_op Colon <*> cond_e)
+      try (StructDeclarator <$> option DeclaratorN declarator <* p_op Colon <*> cond_e)
+  <|>     (StructDeclarator <$> declarator <*> return NullExpr)
 
 type_qualifier = fmap TypeQualifier $ oneOf_kwd [K_Const, K_Volatile]
 
