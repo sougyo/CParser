@@ -557,9 +557,9 @@ direct_declarator = (try ident <|> decl) >>= rest
     ident    = DirectDeclaratorI <$> p_ident
     decl     = between_parenthes $ DirectDeclaratorD <$> declarator
     helper p =
-          try (between_brackets  $ DirectDeclaratorE <$> return p <*> option NullExpr cond_e)
-      <|> try (between_parenthes $ DirectDeclaratorL <$> return p <*> sepBy p_ident (p_op Comma))
-      <|>     (between_parenthes $ DirectDeclaratorP <$> return p <*> option null_parm parameter_type_list)
+          try (between_brackets  $ DirectDeclaratorE p <$> option NullExpr cond_e)
+      <|> try (between_parenthes $ DirectDeclaratorL p <$> sepBy p_ident (p_op Comma))
+      <|>     (between_parenthes $ DirectDeclaratorP p <$> option null_parm parameter_type_list)
     null_parm = ParameterTypeList False []
 
 pointer = Pointer <$> many1 (p_op Asterisk *> many type_qualifier)
@@ -594,8 +594,8 @@ direct_abstract_declarator = head_decl >>= rest
           try (DirectAbstractA <$> between_parenthes abstract_declarator)
       <|> post DirectAbstractN
     post p    =
-          try (between_brackets  $ DirectAbstractB <$> return p <*> option NullExpr  cond_e)
-      <|>     (between_parenthes $ DirectAbstractP <$> return p <*> option null_parm parameter_type_list)
+          try (between_brackets  $ DirectAbstractB p <$> option NullExpr  cond_e)
+      <|>     (between_parenthes $ DirectAbstractP p <$> option null_parm parameter_type_list)
     null_parm = ParameterTypeList False []
 
 initializer =
@@ -648,9 +648,7 @@ iteration_statement =
     while_stmt  = p_kwd K_While *> (StatementWhile <$> expr_between_parenthes <*> statement)
     do_stmt     = p_kwd K_Do    *> (StatementDo  <$> statement)
                     <* p_kwd K_While <*> expr_between_parenthes <* p_op Semicolon
-    for_stmt    = p_kwd K_For   *>
-                        between_parenthes for_expr
-                    <*> statement
+    for_stmt    = p_kwd K_For   *> between_parenthes for_expr <*> statement
     for_expr    = StatementFor <$> expression_statement <*> expression_statement <*> option NullExpr expression
 
 jump_statement = helper <* p_op Semicolon
