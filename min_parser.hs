@@ -365,19 +365,23 @@ data FunctionDefinition = FunctionDefinition [DeclarationSpecifier] Declarator [
 
 
 binOp p = BinOp <$> p_op p
+between_brackets  = between (p_op LeftBracket)   (p_op RightBracket)
+between_braces    = between (p_op LeftBrace)     (p_op RightBrace)
+between_parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
+expr_between_parenthes = between_parenthes expression
 
 primary_e =
       try (EConst  <$> p_const)
   <|> try (EIdent  <$> p_ident)
   <|> try (EString <$> p_string)
-  <|>      p_op LeftParenthes *> expression <* p_op RightParenthes
+  <|>      expr_between_parenthes
 
 postfix_e = primary_e >>= rest
   where
     rest p   = try (helper p >>= rest) <|> return p
     helper p = 
-          try (PostfixE p <$> (p_op LeftBracket *> expression <* p_op RightBracket))
-      <|> try (PostfixA p <$> (p_op LeftParenthes *> argument_expression_list <* p_op RightParenthes))
+          try (PostfixE p <$> between_brackets expression)
+      <|> try (PostfixA p <$> between_parenthes argument_expression_list)
       <|> try (PostfixD p <$> (p_op Dot *> p_ident))
       <|> try (PostfixP p <$> (p_op Ptr *> p_ident))
       <|>     (PostfixO p <$> (p_op PlusPlus <|> p_op MinusMinus))
@@ -390,7 +394,7 @@ unary_e =
   <|> try (UnaryC <$> unary_operator  <*> cast_e )
   <|> try (UnaryS <$> (p_kwd K_Sizeof  *> unary_e))
   <|>     (UnaryT <$> (p_kwd K_Sizeof  *>
-             p_op LeftParenthes *> type_name <* p_op RightParenthes))
+             between_parenthes type_name))
   where
     unary_operator =
           p_op And
@@ -403,8 +407,7 @@ unary_e =
 cast_e = try unary_p <|> type_p
   where
     unary_p = CastU <$> unary_e
-    type_p  = CastT <$>
-                (p_op LeftParenthes *> type_name <* p_op RightParenthes) <*> cast_e
+    type_p  = CastT <$> between_parenthes type_name <*> cast_e
 
 multiplicative_e = chainl1 cast_e
     $ binOp Asterisk
@@ -472,9 +475,27 @@ expression = chainl1 assignment_e $ binOp Comma
 
 -- Declarations
 
-declaration = Declaration <$> declaration_specs <*> init_declarator_list <* p_op Semicolon
+declaration = _declaration >>= search_and_put_typedef_type
   where
+    _declaration = Declaration <$> declaration_specs <*> init_declarator_list <* p_op Semicolon
     init_declarator_list = sepBy init_declarator (p_op Comma)
+
+search_and_put_typedef_type d = search_and_put_ident d >> return d 
+  where
+    search_and_put_ident (Declaration specs idecls) =
+        if elem (TypeStorage K_Typedef) specs then put_idecls idecls else return ()
+    put_idecls idecls = let new_typedefs = concat $ map search_idecl idecls in
+                          lift get >>= \old_typedefs -> (lift . put $ old_typedefs ++ new_typedefs)
+    search_idecl (InitDeclaratorD d  ) = search_decl  d
+    search_idecl (InitDeclaratorI d _) = search_decl  d
+    search_decl  (Declarator      _ d) = search_ddecl d
+    search_decl  _                     = []
+    search_ddecl ddecl = case ddecl of
+      DirectDeclaratorI i   -> [i]
+      DirectDeclaratorD d   -> search_decl  d
+      DirectDeclaratorE d _ -> search_ddecl d
+      DirectDeclaratorP d _ -> search_ddecl d
+      DirectDeclaratorL d _ -> search_ddecl d
 
 declaration_specs = many1 $
       try type_qualifier
@@ -515,7 +536,7 @@ type_spec =
          if elem p kws then return (TypeTypedef p) else parse_fail
 
 struct_or_union_specifier = oneOf_kwd [K_Struct, K_Union] >>= \k ->
-      try (TypeStructUnion k <$> option [] p_ident <*> (p_op LeftBrace *> many1 struct_declaration <* p_op RightBrace))
+      try (TypeStructUnion k <$> option [] p_ident <*> between_braces (many1 struct_declaration))
   <|>     (TypeStructUnion k <$> p_ident           <*> return [])
 
 struct_declaration = StructDeclaration <$> specifier_qualifier_list <*> sepBy1 struct_declarator (p_op Comma)
@@ -534,13 +555,11 @@ direct_declarator = (try ident <|> decl) >>= rest
   where
     rest p   = try (helper p >>= rest) <|> return p
     ident    = DirectDeclaratorI <$> p_ident
-    decl     = parenthes $ DirectDeclaratorD <$> declarator
+    decl     = between_parenthes $ DirectDeclaratorD <$> declarator
     helper p =
-          try (bracket   $ DirectDeclaratorE <$> return p <*> option NullExpr cond_e)
-      <|> try (parenthes $ DirectDeclaratorL <$> return p <*> sepBy p_ident (p_op Comma))
-      <|>     (parenthes $ DirectDeclaratorP <$> return p <*> option null_parm parameter_type_list)
-    bracket   = between (p_op LeftBracket)   (p_op RightBracket)
-    parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
+          try (between_brackets  $ DirectDeclaratorE <$> return p <*> option NullExpr cond_e)
+      <|> try (between_parenthes $ DirectDeclaratorL <$> return p <*> sepBy p_ident (p_op Comma))
+      <|>     (between_parenthes $ DirectDeclaratorP <$> return p <*> option null_parm parameter_type_list)
     null_parm = ParameterTypeList False []
 
 pointer = Pointer <$> many1 (p_op Asterisk *> many type_qualifier)
@@ -549,7 +568,7 @@ type_qualifier_list = many1 type_qualifier
 
 parameter_type_list = parameter_list >>= \p ->
       try (ellipsis *> return (ParameterTypeList True  p))
-  <|>      return (ParameterTypeList False p)
+  <|>                  return (ParameterTypeList False p)
   where
     ellipsis = p_op Comma *> p_op ThreeDots
 
@@ -572,18 +591,16 @@ direct_abstract_declarator = head_decl >>= rest
   where
     rest p    = try (post p >>= rest) <|> return p
     head_decl =
-          try (DirectAbstractA <$> parenthes abstract_declarator)
+          try (DirectAbstractA <$> between_parenthes abstract_declarator)
       <|> post DirectAbstractN
-    bracket   = between (p_op LeftBracket)   (p_op RightBracket)
-    parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
     post p    =
-          try (bracket   $ DirectAbstractB <$> return p <*> option NullExpr  cond_e)
-      <|>     (parenthes $ DirectAbstractP <$> return p <*> option null_parm parameter_type_list)
+          try (between_brackets  $ DirectAbstractB <$> return p <*> option NullExpr  cond_e)
+      <|>     (between_parenthes $ DirectAbstractP <$> return p <*> option null_parm parameter_type_list)
     null_parm = ParameterTypeList False []
 
 initializer =
       try (InitializerA <$> assignment_e)
-  <|>      p_op LeftBrace *> initializer_list <* optional (p_op Comma) <* p_op RightBrace
+  <|>      between_braces (initializer_list <* optional (p_op Comma))
   where
     initializer_list = InitializerI <$> (sepBy1 initializer $ p_op Comma)
 
@@ -607,7 +624,7 @@ labeled_statement =
     default_stmt = StatementDefault <$> (p_kwd K_Default *> p_op Colon *> statement)
     id_stmt      = StatementId      <$> (p_ident <* p_op Colon) <*> statement
 
-compound_statement = p_op LeftBrace *> block_item_list <* p_op RightBrace
+compound_statement = between_braces block_item_list
 
 block_item_list = fmap StatementB $ many block_item
   where
@@ -619,9 +636,8 @@ expression_statement = StatementExpr <$> (option NullExpr expression <* p_op Sem
 
 selection_statement = try if_stmt <|> switch_stmt
   where
-    if_stmt     = p_kwd K_If     *> (StatementIf     <$> expr_p <*> statement <*> else_p)
-    switch_stmt = p_kwd K_Switch *> (StatementSwitch <$> expr_p <*> statement)
-    expr_p      = between (p_op LeftParenthes) (p_op RightParenthes) expression
+    if_stmt     = p_kwd K_If     *> (StatementIf     <$> expr_between_parenthes <*> statement <*> else_p)
+    switch_stmt = p_kwd K_Switch *> (StatementSwitch <$> expr_between_parenthes <*> statement)
     else_p      = option StatementN (p_kwd K_Else *> statement)
 
 iteration_statement =
@@ -629,14 +645,13 @@ iteration_statement =
   <|> try do_stmt
   <|>     for_stmt
   where
-    while_stmt  = p_kwd K_While *> (StatementWhile <$> expr_p <*> statement)
+    while_stmt  = p_kwd K_While *> (StatementWhile <$> expr_between_parenthes <*> statement)
     do_stmt     = p_kwd K_Do    *> (StatementDo  <$> statement)
-                    <* p_kwd K_While <*> expr_p  <* p_op Semicolon
+                    <* p_kwd K_While <*> expr_between_parenthes <* p_op Semicolon
     for_stmt    = p_kwd K_For   *>
-                        between (p_op LeftParenthes) (p_op RightParenthes) for_expr
+                        between_parenthes for_expr
                     <*> statement
     for_expr    = StatementFor <$> expression_statement <*> expression_statement <*> option NullExpr expression
-    expr_p      = between (p_op LeftParenthes) (p_op RightParenthes) expression
 
 jump_statement = helper <* p_op Semicolon
   where
