@@ -195,9 +195,9 @@ token_parser = fmap reject_null . many1 $ PosToken <$> getPosition <*> makeToken
       <|> char ']' *> return RightBracket
       <|> char ',' *> return Comma
 
-comment = string "/*" *> helper
+comment = string "/*" *> rest
   where
-    helper = try (string "*/" *> return NullToken) <|> anyChar *> helper
+    rest = try (string "*/" *> return NullToken) <|> anyChar *> rest
 
 keyword_or_identifier = fmap choose identifier_str
   where
@@ -370,13 +370,13 @@ between_braces    = between (p_op LeftBrace)     (p_op RightBrace)
 between_parenthes = between (p_op LeftParenthes) (p_op RightParenthes)
 expr_between_parenthes = between_parenthes expression
 
-primary_e =
+primary_expression =
       try (EConst  <$> p_const)
   <|> try (EIdent  <$> p_ident)
   <|> try (EString <$> p_string)
   <|>      expr_between_parenthes
 
-postfix_e = primary_e >>= rest
+postfix_expression = primary_expression >>= rest
   where
     rest p   = try (helper p >>= rest) <|> return p
     helper p = 
@@ -385,14 +385,14 @@ postfix_e = primary_e >>= rest
       <|> try (PostfixD p <$> (p_op Dot *> p_ident))
       <|> try (PostfixP p <$> (p_op Ptr *> p_ident))
       <|>     (PostfixO p <$> (p_op PlusPlus <|> p_op MinusMinus))
-    argument_expression_list = sepBy assignment_e (p_op Comma)
+    argument_expression_list = sepBy assignment_expression (p_op Comma)
 
-unary_e =
-      try postfix_e
-  <|> try (UnaryO <$> p_op PlusPlus   <*> unary_e)
-  <|> try (UnaryO <$> p_op MinusMinus <*> unary_e)
-  <|> try (UnaryC <$> unary_operator  <*> cast_e )
-  <|> try (UnaryS <$> (p_kwd K_Sizeof  *> unary_e))
+unary_expression =
+      try postfix_expression
+  <|> try (UnaryO <$> p_op PlusPlus   <*> unary_expression)
+  <|> try (UnaryO <$> p_op MinusMinus <*> unary_expression)
+  <|> try (UnaryC <$> unary_operator  <*> cast_expression )
+  <|> try (UnaryS <$> (p_kwd K_Sizeof  *> unary_expression))
   <|>     (UnaryT <$> (p_kwd K_Sizeof  *>
              between_parenthes type_name))
   where
@@ -404,59 +404,59 @@ unary_e =
       <|> p_op Tilde
       <|> p_op Exclamation
 
-cast_e = try unary_p <|> type_p
+cast_expression = try unary_p <|> type_p
   where
-    unary_p = CastU <$> unary_e
-    type_p  = CastT <$> between_parenthes type_name <*> cast_e
+    unary_p = CastU <$> unary_expression
+    type_p  = CastT <$> between_parenthes type_name <*> cast_expression
 
-multiplicative_e = chainl1 cast_e
+multiplicative_expression = chainl1 cast_expression
     $ binOp Asterisk
   <|> binOp Slash
   <|> binOp Percent
 
-additive_e = chainl1 multiplicative_e
+additive_expression = chainl1 multiplicative_expression
     $ binOp Plus
   <|> binOp Minus
 
-shift_e = chainl1 additive_e
+shift_expression = chainl1 additive_expression
     $ binOp LeftShift
   <|> binOp RightShift
 
-relation_e = chainl1 shift_e
+relation_expression = chainl1 shift_expression
     $ binOp LessThan
   <|> binOp GreaterThan
   <|> binOp LessThanEqual
   <|> binOp GreaterThanEqual
 
-equal_e = chainl1 relation_e
+equal_expression = chainl1 relation_expression
     $ binOp EqualEqual
   <|> binOp NotEqual
 
-and_e = chainl1 equal_e
+and_expression = chainl1 equal_expression
     $ binOp And
 
-exor_e = chainl1 and_e
+exor_expression = chainl1 and_expression
     $ binOp Hat
 
-or_e = chainl1 exor_e
+or_expression = chainl1 exor_expression
     $ binOp Or
 
-land_e = chainl1 or_e
+land_expression = chainl1 or_expression
     $ binOp AndAnd
 
-lor_e = chainl1 land_e
+lor_expression = chainl1 land_expression
     $ binOp OrOr
 
-cond_e = lor_e >>= rest
+condition_expression = lor_expression >>= rest
   where
     rest p    = try (ternary p) <|> return p
-    ternary p = TernaryOp p <$> (p_op Question *> expression <* p_op Colon) <*> cond_e
+    ternary p = TernaryOp p <$> (p_op Question *> expression <* p_op Colon) <*> condition_expression
 
-assignment_e = try assign_e <|> cond_e
+assignment_expression = try assign_e <|> condition_expression
   where
-    assign_e = do u  <- unary_e
+    assign_e = do u  <- unary_expression
                   op <- assign_op
-                  op u <$> assignment_e
+                  op u <$> assignment_expression
     assign_op =
           binOp Equal
       <|> binOp AsteriskEqual
@@ -470,7 +470,7 @@ assignment_e = try assign_e <|> cond_e
       <|> binOp HatEqual
       <|> binOp OrEqual
 
-expression = chainl1 assignment_e $ binOp Comma
+expression = chainl1 assignment_expression $ binOp Comma
 
 
 -- Declarations
@@ -507,11 +507,11 @@ init_declarator = declarator >>= \d ->
   <|>      return (InitDeclaratorD d)
 
 storage_class_spec = fmap TypeStorage $ oneOf_kwd
-  [ K_Typedef ,
-    K_Extern  ,
-    K_Static  ,
-    K_Auto    ,
-    K_Register
+  [ K_Typedef
+  , K_Extern
+  , K_Static
+  , K_Auto
+  , K_Register
   ]
 
 type_spec =
@@ -520,20 +520,20 @@ type_spec =
   <|>      typedef_p
   where
     k_type_specifier = oneOf_kwd
-      [ K_Void    ,
-        K_Char    ,
-        K_Short   ,
-        K_Int     ,
-        K_Long    ,
-        K_Float   ,
-        K_Double  ,
-        K_Signed  ,
-        K_Unsigned
+      [ K_Void
+      , K_Char
+      , K_Short
+      , K_Int
+      , K_Long
+      , K_Float
+      , K_Double
+      , K_Signed
+      , K_Unsigned
       ]
     typedef_p = try $
-      do p   <- p_ident
-         kws <- lift get
-         if elem p kws then return (TypeTypedef p) else parse_fail
+      do ident         <- p_ident
+         typedef_types <- lift get
+         if elem ident typedef_types then return (TypeTypedef ident) else parse_fail
 
 struct_or_union_specifier = oneOf_kwd [K_Struct, K_Union] >>= \k ->
       try (TypeStructUnion k <$> option [] p_ident <*> between_braces (many1 struct_declaration))
@@ -545,7 +545,7 @@ struct_declaration = StructDeclaration <$> specifier_qualifier_list
 specifier_qualifier_list = many1 $ try type_qualifier <|> type_spec
 
 struct_declarator =
-      try (StructDeclarator <$> option DeclaratorN declarator <* p_op Colon <*> cond_e)
+      try (StructDeclarator <$> option DeclaratorN declarator <* p_op Colon <*> condition_expression)
   <|>     (StructDeclarator <$> declarator <*> return NullExpr)
 
 type_qualifier = fmap TypeQualifier $ oneOf_kwd [K_Const, K_Volatile]
@@ -558,7 +558,7 @@ direct_declarator = (try ident <|> decl) >>= rest
     ident    = DirectDeclaratorI <$> p_ident
     decl     = between_parenthes $ DirectDeclaratorD <$> declarator
     helper p =
-          try (between_brackets  $ DirectDeclaratorE p <$> option NullExpr cond_e)
+          try (between_brackets  $ DirectDeclaratorE p <$> option NullExpr condition_expression)
       <|> try (between_parenthes $ DirectDeclaratorL p <$> sepBy p_ident (p_op Comma))
       <|>     (between_parenthes $ DirectDeclaratorP p <$> option null_parm parameter_type_list)
     null_parm = ParameterTypeList False []
@@ -595,12 +595,12 @@ direct_abstract_declarator = head_decl >>= rest
           try (DirectAbstractA <$> between_parenthes abstract_declarator)
       <|> post DirectAbstractN
     post p    =
-          try (between_brackets  $ DirectAbstractB p <$> option NullExpr  cond_e)
+          try (between_brackets  $ DirectAbstractB p <$> option NullExpr  condition_expression)
       <|>     (between_parenthes $ DirectAbstractP p <$> option null_parm parameter_type_list)
     null_parm = ParameterTypeList False []
 
 initializer =
-      try (InitializerA <$> assignment_e)
+      try (InitializerA <$> assignment_expression)
   <|>      between_braces (initializer_list <* optional (p_op Comma))
   where
     initializer_list = InitializerI <$> (sepBy1 initializer $ p_op Comma)
@@ -621,7 +621,7 @@ labeled_statement =
   <|> try default_stmt
   <|>     id_stmt
   where
-    case_stmt    = StatementCase    <$> (p_kwd K_Case *> cond_e <* p_op Colon) <*> statement
+    case_stmt    = StatementCase    <$> (p_kwd K_Case *> condition_expression <* p_op Colon) <*> statement
     default_stmt = StatementDefault <$> (p_kwd K_Default *> p_op Colon *> statement)
     id_stmt      = StatementId      <$> (p_ident <* p_op Colon) <*> statement
 
@@ -685,10 +685,30 @@ function_definition = FunctionDefinition <$>
 min_parser = translation_unit <* eof
 
 run input = case parse (spaces *> token_parser <* eof) "" input of
-              Right val -> putStrLn $ show $ helper val
+              Right val -> putStrLn $ analyze_translation_unit $ helper val
               Left  err -> putStrLn $ show err
   where
-    helper val = evalState (runParserT min_parser () "" val) []
+    helper val = evalState (runParserT min_parser () "" val) ["__builtin_va_list"]
+
+
+analyze_translation_unit (Right exts) = show $ concat $ fmap analyze_external_declaration exts
+analyze_translation_unit (Left  err) = show err
+
+analyze_external_declaration (ExternalDeclarationF fd) = analyze_function_definition fd
+analyze_external_declaration (ExternalDeclarationD d)  = []
+
+analyze_function_definition (FunctionDefinition _ declarator _ _) = analyze_declarator declarator
+
+analyze_declarator (Declarator _ dd) = analyze_direct_declarator dd
+analyze_declarator _ = []
+
+analyze_direct_declarator dd = case dd of
+  DirectDeclaratorI i   -> [i]
+  DirectDeclaratorD d   -> analyze_declarator d
+  DirectDeclaratorE d _ -> analyze_direct_declarator d
+  DirectDeclaratorP d _ -> analyze_direct_declarator d
+  DirectDeclaratorL d _ -> analyze_direct_declarator d
+
 
 main = getContents >>= run
 
