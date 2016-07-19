@@ -277,11 +277,15 @@ data StructDeclaration = StructDeclaration [DeclarationSpecifier] [StructDeclara
 data StructDeclarator = StructDeclarator Declarator Expr
   deriving (Show, Eq)
 
+data Enumerator = Enumerator String Expr
+  deriving (Show, Eq)
+
 data DeclarationSpecifier =
     TypeSpecifier KeywordType
   | TypeQualifier KeywordType
   | TypeStorage   KeywordType
   | TypeStructUnion KeywordType String [StructDeclaration]
+  | TypeEnum      String [Enumerator]
   | TypeTypedef   String
   deriving (Show, Eq)
 
@@ -516,8 +520,9 @@ storage_class_spec = fmap TypeStorage $ oneOf_kwd
 
 type_spec =
       try (TypeSpecifier <$> k_type_specifier)
-  <|> try (struct_or_union_specifier)
-  <|>      typedef_p
+  <|> try struct_or_union_specifier
+  <|> try enum_specifier
+  <|>     typedef_p
   where
     k_type_specifier = oneOf_kwd
       [ K_Void
@@ -547,6 +552,16 @@ specifier_qualifier_list = many1 $ try type_qualifier <|> type_spec
 struct_declarator =
       try (StructDeclarator <$> option DeclaratorN declarator <* p_op Colon <*> condition_expression)
   <|>     (StructDeclarator <$> declarator <*> return NullExpr)
+
+enum_specifier = p_kwd K_Enum *> (try ident_and_elist <|> ident)
+  where
+    ident_and_elist = TypeEnum <$> option "" p_ident <*> enumerator_list_between_braces
+    ident           = TypeEnum <$> p_ident           <*> return []
+    enumerator_list_between_braces = between_braces $ sepEndBy1 enumerator (p_op Comma)
+
+enumerator = Enumerator <$> p_ident <*> option_rhs
+  where
+    option_rhs = option NullExpr $ p_op Equal *> condition_expression
 
 type_qualifier = fmap TypeQualifier $ oneOf_kwd [K_Const, K_Volatile]
 
@@ -692,7 +707,7 @@ run input = case parse (spaces *> token_parser <* eof) "" input of
 
 
 analyze_translation_unit (Right exts) = show $ concat $ fmap analyze_external_declaration exts
-analyze_translation_unit (Left  err) = show err
+analyze_translation_unit (Left  err)  = show err
 
 analyze_external_declaration (ExternalDeclarationF fd) = analyze_function_definition fd
 analyze_external_declaration (ExternalDeclarationD d)  = []
