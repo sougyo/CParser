@@ -125,11 +125,11 @@ keyword_dictionary = [
   ]
 
 data Token =
-    Constant String
-  | Identifier String
+    Constant      ConstantType
+  | Identifier    String
   | StringLiteral String
-  | Operator OperatorType
-  | Keyword KeywordType
+  | Operator      OperatorType
+  | Keyword       KeywordType
   | NullToken
   deriving (Show, Eq)
 
@@ -143,7 +143,7 @@ token_parser = fmap reject_null . many1 $ PosToken <$> getPosition <*> makeToken
     reject_null = filter $ \t -> get_token t /= NullToken
     makeToken =
           try comment
-      <|> try (Constant <$> many1 digit)
+      <|> try (Constant <$> constant)
       <|> try keyword_or_identifier
       <|> try (StringLiteral <$> string_literal)
       <|> Operator <$> operator
@@ -222,6 +222,83 @@ string_literal = char '"' *> s_char_sequence <* char '"'
       <|> try (string "\\t"  *> return '\t')
       <|>      string "\\v"  *> return '\v'
 
+data ConstantType =
+    IntegerDecimalConstant      String [IntegerSuffix]
+  | IntegerOctalConstant        String [IntegerSuffix]
+  | IntegerHexadecimalConstant  String [IntegerSuffix]
+  | FloatingDecimalConstant     String String String FloatingSuffix
+  | FloatingHexadecimalConstant String String String FloatingSuffix
+  deriving (Show, Eq)
+
+data IntegerSuffix = UnsignedSuffix | LongSuffix | LongLongSuffix
+  deriving (Show, Eq)
+
+data FloatingSuffix = 
+    FSuffix
+  | LSuffix
+  | NullFloatingSuffix
+  deriving (Show, Eq)
+
+constant =
+      try floating_constant
+  <|>     integer_constant
+{-
+  <|> enumeration_constant
+  <|> character_constant
+-}
+
+integer_constant = constant_part <*> option [] integer_suffix
+  where
+    constant_part =
+          try (IntegerDecimalConstant     <$> decimal_constant    )
+      <|> try (IntegerOctalConstant       <$> octal_constant      )
+      <|>     (IntegerHexadecimalConstant <$> hexadecimal_constant)
+
+decimal_constant     = (:) <$> nonzero_digit <*> many digit
+
+octal_constant       = char '0'               *> many octDigit
+
+hexadecimal_constant = hexadecimal_prefix     *> many hexDigit
+
+hexadecimal_prefix = try (string "0x") <|> (string "0X")
+
+integer_suffix =
+      try ((++) <$> unsigned_p  <*> long_long_p           )
+  <|> try ((++) <$> unsigned_p  <*> (option [] long_p)    )
+  <|> try ((++) <$> long_long_p <*> (option [] unsigned_p))
+  <|>     ((++) <$> long_p      <*> (option [] unsigned_p))
+  where
+    unsigned_suffix  = char        'u'   <|> char   'U'
+    long_suffix      = char        'l'   <|> char   'L'
+    long_long_suffix = try (string "ll") <|> string "LL"
+    unsigned_p  = unsigned_suffix  *> return [UnsignedSuffix]
+    long_p      = long_suffix      *> return [LongSuffix]
+    long_long_p = long_long_suffix *> return [LongLongSuffix]
+
+nonzero_digit = oneOf "123456789"
+
+floating_constant = 
+      try decimal_floating_constant 
+  <|>     hexadecimal_floating_constant
+
+construct_floating_constant_p f_type digit_p exp_prefix =
+       try (f_type <$> (many  digit_p <* char '.') <*> many1 digit_p <*> option "" exponent_part <*> floating_suffix)
+  <|>  try (f_type <$> (many1 digit_p <* char '.') <*> return ""     <*> option "" exponent_part <*> floating_suffix)
+  <|>      (f_type <$>  many1 digit_p              <*> return ""     <*>           exponent_part <*> floating_suffix)
+  where
+    exponent_part = oneOf exp_prefix *> ((++) <$> option "" (string "+" <|> string "-") <*> many1 digit)
+
+decimal_floating_constant =
+    construct_floating_constant_p FloatingDecimalConstant digit "eE"
+
+hexadecimal_floating_constant = hexadecimal_prefix *> 
+    construct_floating_constant_p FloatingHexadecimalConstant hexDigit "pP"
+
+floating_suffix = option NullFloatingSuffix $
+      try (oneOf "lL" *> return LSuffix)
+  <|>     (oneOf "fF" *> return FSuffix)
+
+
 gen_p f  = tokenPrim (\c -> show c) (\pos c _cs -> get_pos c) $ f . get_token
 p_const  = gen_p $ \n -> case n of
               Constant s -> Just s
@@ -245,7 +322,7 @@ parse_fail = gen_p $ \_ -> Nothing
  
 data Expr =
     EIdent    String
-  | EConst    String
+  | EConst    ConstantType
   | EString   String
   | TernaryOp Expr Expr Expr
   | BinOp     OperatorType Expr Expr
@@ -556,7 +633,7 @@ struct_declarator =
 enum_specifier = p_kwd K_Enum *> (try ident_and_elist <|> ident)
   where
     ident_and_elist = TypeEnum <$> option "" p_ident <*> enumerator_list_between_braces
-    ident           = TypeEnum <$> p_ident           <*> return []
+    ident           = TypeEnum <$>           p_ident <*> return []
     enumerator_list_between_braces = between_braces $ sepEndBy1 enumerator (p_op Comma)
 
 enumerator = Enumerator <$> p_ident <*> option_rhs
@@ -567,12 +644,12 @@ type_qualifier = fmap TypeQualifier $ oneOf_kwd [K_Const, K_Volatile]
 
 declarator = Declarator <$> option PointerN pointer <*> direct_declarator
 
-direct_declarator = (try ident <|> decl) >>= rest
+direct_declarator = (try ident <|> between_parenthes decl) >>= rest
   where
-    rest p   = try (helper p >>= rest) <|> return p
     ident    = DirectDeclaratorI <$> p_ident
-    decl     = between_parenthes $ DirectDeclaratorD <$> declarator
-    helper p =
+    decl     = DirectDeclaratorD <$> declarator
+    rest p   = try (rest_helper p >>= rest) <|> return p
+    rest_helper p =
           try (between_brackets  $ DirectDeclaratorE p <$> option NullExpr condition_expression)
       <|> try (between_parenthes $ DirectDeclaratorL p <$> sepBy p_ident (p_op Comma))
       <|>     (between_parenthes $ DirectDeclaratorP p <$> option null_parm parameter_type_list)
@@ -700,7 +777,8 @@ function_definition = FunctionDefinition <$>
 min_parser = translation_unit <* eof
 
 run input = case parse (spaces *> token_parser <* eof) "" input of
-              Right val -> putStrLn $ analyze_translation_unit $ helper val
+              --Right val -> putStrLn $ analyze_translation_unit $ helper val
+              Right val -> putStrLn $ show $ helper val
               Left  err -> putStrLn $ show err
   where
     helper val = evalState (runParserT min_parser () "" val) ["__builtin_va_list"]
