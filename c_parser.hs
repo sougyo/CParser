@@ -1,9 +1,13 @@
+{- Author: Shogo Matsumoto -}
+
 import Control.Applicative ((<*), (*>), (<*>), (<$>))
 import Text.Parsec.Prim (tokenPrim, getPosition)
 import Text.Parsec.Pos (SourcePos)
 import Control.Monad (sequence, when)
 import Control.Monad.State.Lazy
 import Text.Parsec
+import System.Exit
+import System.IO
 
 data OperatorType = 
     LeftParenthes
@@ -320,7 +324,8 @@ escape_sequence =
   <|>     universal_character_name
     
 simple_escape_sequence =
-      try (string "\\'"  *> return '\'')
+      try (string "\\\\" *> return '\\')
+  <|> try (string "\\'"  *> return '\'')
   <|> try (string "\\\"" *> return '"' )
   <|> try (string "\\a"  *> return '\a')
   <|> try (string "\\b"  *> return '\b')
@@ -500,7 +505,7 @@ expr_between_parenthes = between_parenthes expression
 primary_expression =
       try (EConst  <$> p_const)
   <|> try (EIdent  <$> p_ident)
-  <|> try (EString <$> p_string)
+  <|> try (EString <$> (fmap concat $ many1 p_string))
   <|>      expr_between_parenthes
 
 postfix_expression = primary_expression >>= rest
@@ -744,7 +749,7 @@ initializer =
       try (InitializerA <$> assignment_expression)
   <|>      between_braces (initializer_list <* optional (p_op Comma))
   where
-    initializer_list = InitializerI <$> (sepBy1 initializer $ p_op Comma)
+    initializer_list = InitializerI <$> (sepEndBy1 initializer $ p_op Comma)
 
 
 -- Statements
@@ -827,10 +832,12 @@ min_parser = translation_unit <* eof
 
 run input = case parse (spaces *> token_parser <* eof) "" input of
               --Right val -> putStrLn $ analyze_translation_unit $ helper val
-              Right val -> putStrLn $ show $ helper val
-              Left  err -> putStrLn $ show err
+              Right val -> helper val
+              Left  err -> hPutStrLn stderr (show err) >> exitWith (ExitFailure 1)
   where
-    helper val = evalState (runParserT min_parser () "" val) ["__builtin_va_list"]
+    helper val = case evalState (runPT min_parser () "" val) ["__builtin_va_list"] of
+              Right val2 -> putStrLn $ show val2
+              Left  err  -> hPutStrLn stderr (show err) >> exitWith (ExitFailure 1)
 
 
 analyze_translation_unit (Right exts) = show $ concat $ fmap analyze_external_declaration exts
