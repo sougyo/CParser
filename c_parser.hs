@@ -114,6 +114,7 @@ keyword_dictionary = [
   ("auto"    , K_Auto    ),
   ("register", K_Register),
   ("const"   , K_Const   ),
+  ("__const" , K_Const   ),
   ("volatile", K_Volatile),
   ("goto"    , K_Goto    ),
   ("continue", K_Continue),
@@ -143,10 +144,13 @@ token_parser = fmap reject_null . many1 $ PosToken <$> getPosition <*> makeToken
     reject_null = filter $ \t -> get_token t /= NullToken
     makeToken =
           try comment
+      <|> try ignore_attribute_or_asm
+      <|> try ignore_extension
+      <|> try ignore_restrict
       <|> try (Constant <$> constant)
       <|> try keyword_or_identifier
-      <|> try (StringLiteral <$> string_literal)
-      <|> Operator <$> operator
+      <|> try string_literal
+      <|>     (Operator <$> operator)
     operator  =
           try (string "..." *> return ThreeDots)
       <|> try (string "++"  *> return PlusPlus)
@@ -207,20 +211,18 @@ keyword_or_identifier = fmap choose identifier_str
     identifier_str = (:) <$> nondigit <*> many (nondigit <|> digit)
     nondigit = letter <|> char '_'
 
-string_literal = char '"' *> s_char_sequence <* char '"'
+ignore_attribute_or_asm = attribute_or_asm *> spaces
+                            *> between (char '(') (char ')') any_parenthes *> return NullToken
   where
-    s_char_sequence = many1 (s_char <|> escape_sequence)
-    s_char = noneOf "\n\"\\"
-    escape_sequence =
-          try (string "\\'"  *> return '\'')
-      <|> try (string "\\\"" *> return '"' )
-      <|> try (string "\\a"  *> return '\a')
-      <|> try (string "\\b"  *> return '\b')
-      <|> try (string "\\f"  *> return '\f')
-      <|> try (string "\\n"  *> return '\n')
-      <|> try (string "\\r"  *> return '\r')
-      <|> try (string "\\t"  *> return '\t')
-      <|>      string "\\v"  *> return '\v'
+    attribute_or_asm = try (string "__attribute__") <|> string "__asm__"
+    any_parenthes = many helper *> return ()
+    helper =
+          try (between (char '(') (char ')') any_parenthes)
+      <|> try (many1 (noneOf "()") *> return ())
+
+ignore_extension = string "__extension__" *> return NullToken
+
+ignore_restrict  = string "__restrict" *> return NullToken
 
 data ConstantType =
     IntegerDecimalConstant      String [IntegerSuffix]
@@ -228,6 +230,7 @@ data ConstantType =
   | IntegerHexadecimalConstant  String [IntegerSuffix]
   | FloatingDecimalConstant     String String String FloatingSuffix
   | FloatingHexadecimalConstant String String String FloatingSuffix
+  | CharacterConstant           String
   deriving (Show, Eq)
 
 data IntegerSuffix = UnsignedSuffix | LongSuffix | LongLongSuffix
@@ -241,18 +244,15 @@ data FloatingSuffix =
 
 constant =
       try floating_constant
-  <|>     integer_constant
-{-
-  <|> enumeration_constant
-  <|> character_constant
--}
+  <|> try integer_constant
+  <|>     character_constant
 
 integer_constant = constant_part <*> option [] integer_suffix
   where
     constant_part =
-          try (IntegerDecimalConstant     <$> decimal_constant    )
+          try (IntegerHexadecimalConstant <$> hexadecimal_constant)
       <|> try (IntegerOctalConstant       <$> octal_constant      )
-      <|>     (IntegerHexadecimalConstant <$> hexadecimal_constant)
+      <|>     (IntegerDecimalConstant     <$> decimal_constant    )
 
 decimal_constant     = (:) <$> nonzero_digit <*> many digit
 
@@ -297,6 +297,48 @@ hexadecimal_floating_constant = hexadecimal_prefix *>
 floating_suffix = option NullFloatingSuffix $
       try (oneOf "lL" *> return LSuffix)
   <|>     (oneOf "fF" *> return FSuffix)
+
+character_constant = CharacterConstant <$> helper
+  where
+    helper = optional (string "L")
+               *> between (char '\'') (char '\'') c_char_sequence
+    c_char_sequence = many1 c_char
+    c_char = try (noneOf "'\\\n") <|> escape_sequence
+
+string_literal = StringLiteral <$> helper
+  where
+    helper = optional (string "L")
+               *> between (char '"') (char '"') s_char_sequence
+    s_char_sequence = many s_char
+    s_char = try (noneOf "\"\\\n") <|> escape_sequence
+
+escape_sequence =
+      try simple_escape_sequence
+  <|> try octal_escape_sequence
+  <|> try hexadecimal_escape_sequence
+  <|>     universal_character_name
+    
+simple_escape_sequence =
+      try (string "\\'"  *> return '\'')
+  <|> try (string "\\\"" *> return '"' )
+  <|> try (string "\\a"  *> return '\a')
+  <|> try (string "\\b"  *> return '\b')
+  <|> try (string "\\f"  *> return '\f')
+  <|> try (string "\\n"  *> return '\n')
+  <|> try (string "\\r"  *> return '\r')
+  <|> try (string "\\t"  *> return '\t')
+  <|>      string "\\v"  *> return '\v'
+
+octal_escape_sequence =
+      try (char '\\' *> octDigit *> octDigit *> octDigit *> return '?')
+  <|> try (char '\\' *> octDigit *> octDigit             *> return '?')
+  <|> try (char '\\' *> octDigit                         *> return '?')
+
+hexadecimal_escape_sequence = string "\\x" *> many1 hexDigit *> return '?'
+
+universal_character_name = (try (string "\\u") <|> string "\\U") *> many1 hex_quad *> return '?'
+  where
+    hex_quad = hexDigit *> hexDigit *> hexDigit *> hexDigit
 
 
 gen_p f  = tokenPrim (\c -> show c) (\pos c _cs -> get_pos c) $ f . get_token
