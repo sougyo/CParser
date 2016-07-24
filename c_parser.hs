@@ -147,6 +147,7 @@ token_parser = fmap reject_null . many1 $ PosToken <$> getPosition <*> makeToken
       <|> try ignore_attribute_or_asm
       <|> try ignore_extension
       <|> try ignore_restrict
+      <|> try (string "inline" *> return NullToken)
       <|> try (Constant <$> constant)
       <|> try keyword_or_identifier
       <|> try string_literal
@@ -278,8 +279,8 @@ integer_suffix =
 nonzero_digit = oneOf "123456789"
 
 floating_constant = 
-      try decimal_floating_constant 
-  <|>     hexadecimal_floating_constant
+      try hexadecimal_floating_constant
+  <|>     decimal_floating_constant 
 
 construct_floating_constant_p f_type digit_p exp_prefix =
        try (f_type <$> (many  digit_p <* char '.') <*> many1 digit_p <*> option "" exponent_part <*> floating_suffix)
@@ -345,9 +346,13 @@ gen_p f  = tokenPrim (\c -> show c) (\pos c _cs -> get_pos c) $ f . get_token
 p_const  = gen_p $ \n -> case n of
               Constant s -> Just s
               _          -> Nothing
-p_ident  = gen_p $ \n -> case n of
-              Identifier s -> Just s
-              _            -> Nothing
+p_ident   = do gen_p $ \n -> case n of
+                 Identifier s -> Just s
+                 _            -> Nothing
+p_typedef = do typedef_typef <- lift get
+               gen_p $ \n -> case n of
+                 Identifier s -> if elem s typedef_typef then Just s else Nothing
+                 _            -> Nothing
 p_string = gen_p $ \n -> case n of
               StringLiteral s -> Just s
               _               -> Nothing
@@ -360,7 +365,6 @@ p_kwd p  = gen_p $ \n -> if n == Keyword p
 oneOf_kwd kwds = gen_p $ \n -> case n of
               Keyword k -> if elem k kwds then Just k else Nothing
               _         -> Nothing
-parse_fail = gen_p $ \_ -> Nothing
  
 data Expr =
     EIdent    String
@@ -527,7 +531,7 @@ unary_expression =
       <|> p_op Tilde
       <|> p_op Exclamation
 
-cast_expression = try unary_p <|> type_p
+cast_expression = try type_p <|> unary_p
   where
     unary_p = CastU <$> unary_expression
     type_p  = CastT <$> between_parenthes type_name <*> cast_expression
@@ -641,7 +645,7 @@ type_spec =
       try (TypeSpecifier <$> k_type_specifier)
   <|> try struct_or_union_specifier
   <|> try enum_specifier
-  <|>     typedef_p
+  <|>     TypeTypedef <$> p_typedef
   where
     k_type_specifier = oneOf_kwd
       [ K_Void
@@ -654,10 +658,6 @@ type_spec =
       , K_Signed
       , K_Unsigned
       ]
-    typedef_p = try $
-      do ident         <- p_ident
-         typedef_types <- lift get
-         if elem ident typedef_types then return (TypeTypedef ident) else parse_fail
 
 struct_or_union_specifier = oneOf_kwd [K_Struct, K_Union] >>= \k ->
       try (TypeStructUnion k <$> option [] p_ident <*> between_braces (many1 struct_declaration))
@@ -707,7 +707,14 @@ parameter_type_list = parameter_list >>= \p ->
   where
     ellipsis = p_op Comma *> p_op ThreeDots
 
-parameter_list = sepBy1 parameter_declaration $ p_op Comma
+my_sepBy1 p sep = do x  <- p
+                     xs <- rest
+                     return (x:xs)
+  where
+    rest =     try (sep >> ((:) <$> p <*> rest))
+           <|> return []
+
+parameter_list = my_sepBy1 parameter_declaration $ p_op Comma
 
 parameter_declaration =  declaration_specs >>= \d ->
       try    (ParameterDeclarationD d <$> declarator)
